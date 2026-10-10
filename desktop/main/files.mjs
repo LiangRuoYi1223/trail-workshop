@@ -19,12 +19,12 @@ export function publicError(error, fallback = '操作失败，请重试') {
 export function validateOptions(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DesktopError('CONFIG_INVALID', '模型参数格式无效');
   const allowed = new Set(['shape', 'widthMm', 'heightMm', 'polygonSides', 'cornerRadiusMm', 'bearingDeg', 'paddingFraction',
-    'center', 'groundWidthM', 'baseThicknessMm', 'zExaggeration', 'gridColumns', 'smoothing', 'maxMissingFraction', 'routeWidthMm', 'frameWidthMm']);
+    'center', 'groundWidthM', 'baseThicknessMm', 'zExaggeration', 'gridColumns', 'smoothing', 'maxMissingFraction', 'routeWidthMm', 'routeHeightMm', 'routeColor', 'frameWidthMm']);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new DesktopError('CONFIG_INVALID', '存在不支持的模型参数');
   const output = {
     shape: 'rectangle', widthMm: 120, heightMm: 80, polygonSides: 6, cornerRadiusMm: 0,
     bearingDeg: 0, paddingFraction: 0.1, baseThicknessMm: 2, zExaggeration: 2,
-    gridColumns: 129, smoothing: 'raw', maxMissingFraction: 0.01, routeWidthMm: 1, frameWidthMm: 3,
+    gridColumns: 129, smoothing: 'raw', maxMissingFraction: 0.01, routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
     ...input,
   };
   const range = (key, min, max, label, integral = false) => {
@@ -38,6 +38,9 @@ export function validateOptions(input = {}) {
   range('paddingFraction', 0, 0.4, '取景留白'); range('baseThicknessMm', 0.5, 30, '底座厚度');
   range('zExaggeration', 0.01, 20, '垂直夸张'); range('gridColumns', 17, 257, '精度点数', true);
   range('maxMissingFraction', 0, 0.05, '允许高程缺值比例'); range('routeWidthMm', 0.4, 5, '路线宽度');
+  range('routeHeightMm', 0.1, 10, '路线厚度');
+  if (typeof output.routeColor !== 'string' || !/^#[a-f0-9]{6}$/i.test(output.routeColor)) throw new DesktopError('CONFIG_INVALID', '路线颜色须为有效的 RGB 颜色');
+  output.routeColor = output.routeColor.toLowerCase();
   range('frameWidthMm', 0, 20, '外沿宽度');
   const cornerLimit = output.shape === 'circle' ? 0 : output.shape === 'rectangle'
     ? Math.min(output.widthMm, output.heightMm) / 2 : output.widthMm / 2 * Math.cos(Math.PI / output.polygonSides);

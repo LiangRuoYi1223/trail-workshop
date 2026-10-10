@@ -1,17 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import RouteMap from './components/RouteMap';
 import TerrainView from './components/TerrainView';
+import RouteColorPicker from './components/RouteColorPicker';
+import { geometryOptions } from './route-color';
 import type { CacheInfo, DemInfo, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
 
 const DEFAULTS: ModelOptions = {
   shape: 'rectangle', widthMm: 120, heightMm: 80, polygonSides: 6, cornerRadiusMm: 0,
   bearingDeg: 0, paddingFraction: .1, baseThicknessMm: 2, zExaggeration: 2,
-  gridColumns: 129, smoothing: 'raw', routeWidthMm: 1, frameWidthMm: 3,
+  gridColumns: 129, smoothing: 'raw', routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
 };
 const api = window.terrain;
 function unwrap<T>(result: Result<T>): T { if (!result.ok) throw new Error(result.error.message); return result.value; }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : '操作未完成，请重试。'; }
-function signature(route: RouteInfo | null, dem: DemInfo | null, mode: 'auto' | 'local', offlineOnly: boolean, options: ModelOptions): string { return JSON.stringify({ routeId: route?.id, demId: mode === 'local' ? dem?.id : undefined, demMode: mode, offlineOnly: mode === 'auto' && offlineOnly, options }); }
+function signature(route: RouteInfo | null, dem: DemInfo | null, mode: 'auto' | 'local', offlineOnly: boolean, options: ModelOptions): string { return JSON.stringify({ routeId: route?.id, demId: mode === 'local' ? dem?.id : undefined, demMode: mode, offlineOnly: mode === 'auto' && offlineOnly, options:geometryOptions(options) }); }
 function sizeLabel(bytes: number): string { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function sourceLabel(source: NonNullable<Job['result']>['demSource']): string {
   if (!source) return '本地高程';
@@ -24,12 +26,13 @@ function validate(options: ModelOptions): string {
   if (![65, 129, 257].includes(options.gridColumns)) return '请选择快速、标准或精细建模精度。';
   if (!['raw', 'light', 'medium', 'heavy'].includes(options.smoothing)) return '请选择有效的地形平滑方式。';
   const rules: Array<[keyof ModelOptions, number, number, string]> = [
-    ['widthMm', 10, 500, '山体长度'], ['heightMm', 10, 500, '山体宽度'], ['routeWidthMm', .4, 5, '路线宽度'],
+    ['widthMm', 10, 500, '山体长度'], ['heightMm', 10, 500, '山体宽度'], ['routeWidthMm', .4, 5, '路线宽度'], ['routeHeightMm', .1, 10, '路线凸起厚度'],
     ['baseThicknessMm', .5, 30, '底座厚度'], ['frameWidthMm', 0, 20, '外沿宽度'], ['zExaggeration', .1, 20, '垂直夸张'],
     ['bearingDeg', -180, 180, '取景旋转'], ['paddingFraction', 0, .4, '取景留白'], ['polygonSides', 3, 8, '多边形边数'],
   ];
   for (const [key, min, max, label] of rules) { const value = options[key]; if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) return `${label}需在 ${min}–${max} 之间。`; }
   if (!Number.isInteger(options.polygonSides)) return '多边形边数需为整数。';
+  if (!/^#[\da-f]{6}$/i.test(options.routeColor)) return '请选择有效的路线颜色。';
   if (options.groundWidthM !== undefined && (!Number.isFinite(options.groundWidthM) || options.groundWidthM < 1 || options.groundWidthM > 100000)) return '地面取景宽度需在 0.001–100 km 之间。';
   if (options.center && (!Number.isFinite(options.center.lat) || !Number.isFinite(options.center.lon) || Math.abs(options.center.lat) > 80 || Math.abs(options.center.lon) > 180)) return '取景纬度需在 −80–80°、经度需在 −180–180° 之间。';
   const radius = options.shape === 'circle' ? 0 : options.shape === 'polygon' ? options.widthMm / 2 * Math.cos(Math.PI / options.polygonSides) : Math.min(options.widthMm, options.heightMm) / 2;
@@ -79,6 +82,8 @@ export default function App() {
   const currentSignature = signature(route, dem, demMode, offlineOnly, options);
   const stale = !!preview && (previewSignature !== currentSignature || previewId !== job?.id);
   const configError = validate(options);
+  const framingSignature = JSON.stringify({ shape:options.shape, widthMm:options.widthMm, heightMm:options.heightMm, polygonSides:options.polygonSides,
+    cornerRadiusMm:options.cornerRadiusMm, bearingDeg:options.bearingDeg, paddingFraction:options.paddingFraction, center:options.center, groundWidthM:options.groundWidthM });
   const canGenerate = !!api && !!route && (demMode === 'auto' || !!dem) && !controlsLocked && !configError && !inspectionError && !inspectionPending;
   const canSave = !!api && !!previewId && !!preview && !stale && job?.state === 'succeeded' && !controlsLocked && !previewPending;
 
@@ -135,7 +140,7 @@ export default function App() {
       }).catch(reason => { if (alive) setInspectionError(messageOf(reason)); }).finally(() => { if (alive) setInspectionPending(false); });
     }, 250);
     return () => { alive = false; clearTimeout(timer); };
-  }, [route, options, configError]);
+  }, [route, framingSignature, configError]);
 
   useEffect(() => {
     if (!api || !job || !running) return;
@@ -179,7 +184,7 @@ export default function App() {
       if (key === 'shape' && value === 'circle') next.cornerRadiusMm = 0;
       return next;
     });
-    setError(''); setSavedPath('');
+    setError(''); if (key !== 'routeColor') setSavedPath('');
   };
   function resetFraming() { setOptions(previous => { const { center, groundWidthM, ...automatic } = previous; return { ...automatic, bearingDeg: 0 }; }); setError(''); setSavedPath(''); }
   function moveCenter(center: GeoPoint) { if (!controlsLocked) update('center', center); }
@@ -261,8 +266,12 @@ export default function App() {
           {options.shape === 'polygon' && <label className="select-field">多边形边数<select value={options.polygonSides} disabled={controlsLocked} onChange={event => update('polygonSides', Number(event.currentTarget.value))}>{[3, 4, 5, 6, 7, 8].map(n => <option value={n} key={n}>{n} 边形</option>)}</select></label>}
           <div className="field-pair"><NumberField label={options.shape === 'circle' ? '山体直径' : '打印长度'} value={options.widthMm} onChange={value => update('widthMm', value)} min={10} max={500} disabled={controlsLocked} />{options.shape === 'rectangle' && <NumberField label="打印宽度" value={options.heightMm} onChange={value => update('heightMm', value)} min={10} max={500} disabled={controlsLocked} />}</div>
           <p className="field-hint">外沿会增加成品外尺寸，最终尺寸见模型结果。</p>
-          <div className="field-pair"><NumberField label="路线宽度" value={options.routeWidthMm} onChange={value => update('routeWidthMm', value)} min={.4} max={5} step={.1} disabled={controlsLocked} /><NumberField label="垂直夸张" value={options.zExaggeration} onChange={value => update('zExaggeration', value)} min={.1} max={20} step={.1} unit="倍" disabled={controlsLocked} /></div>
-          <p className="route-contract">路线沿地表起伏，固定突出 1 mm。</p>
+          <div className="field-pair"><NumberField label="垂直夸张" value={options.zExaggeration} onChange={value => update('zExaggeration', value)} min={.1} max={20} step={.1} unit="倍" disabled={controlsLocked} /></div>
+        </section>
+        <section className="control-section route-style-section"><h2>路线样式</h2>
+          <div className="field-pair"><NumberField label="路线宽度" value={options.routeWidthMm} onChange={value => update('routeWidthMm', value)} min={.4} max={5} step={.1} disabled={controlsLocked} /><NumberField label="凸起厚度" value={options.routeHeightMm} onChange={value => update('routeHeightMm', value)} min={.1} max={10} step={.1} disabled={controlsLocked} /></div>
+          <p className="route-contract">厚度是路线沿地表向上凸起的高度，不随垂直夸张改变。</p>
+          <RouteColorPicker value={options.routeColor} onChange={value=>update('routeColor',value)} disabled={controlsLocked} />
         </section>
         <section className="control-section advanced-section"><details><summary>更多设置<span>底座、精度与取景</span></summary><div className="advanced-content">
           <div className="field-pair"><NumberField label="底座厚度" value={options.baseThicknessMm} onChange={value => update('baseThicknessMm', value)} min={.5} max={30} step={.5} disabled={controlsLocked} /><NumberField label="外沿宽度" value={options.frameWidthMm} onChange={value => update('frameWidthMm', value)} min={0} max={20} step={.5} disabled={controlsLocked} /></div>
@@ -278,11 +287,11 @@ export default function App() {
         const next = event.key === 'Home' ? 'route' : event.key === 'End' ? 'model' : tab === 'route' ? 'model' : 'route';
         setTab(next); document.getElementById(`${next}-tab`)?.focus();
       }}><button role="tab" id="route-tab" tabIndex={tab === 'route' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'route'} onClick={() => setTab('route')}>地图取景</button><button role="tab" id="model-tab" tabIndex={tab === 'model' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'model'} onClick={() => setTab('model')}>三维模型</button></div><span className={`result-state${stale ? ' stale' : ''}`}>{stale ? '此前结果 · 请重新生成' : preview && tab === 'model' ? '最终打印网格' : options.center || options.groundWidthM !== undefined ? '手动取景' : '自动取景'}</span></div>
-        <div className="workspace-panel" id="workspace-panel" role="tabpanel" tabIndex={0} aria-labelledby={tab === 'route' ? 'route-tab' : 'model-tab'}><div className="workspace-view" hidden={tab !== 'route'}><RouteMap route={route} inspection={inspection} options={options} pending={inspectionPending} locked={controlsLocked} onCenter={moveCenter} onChange={changeFraming} /></div>{tab === 'model' && <TerrainView preview={preview} />}{previewPending && tab === 'model' && <div className="preview-loading" role="status">正在加载最终模型…</div>}</div>
+        <div className="workspace-panel" id="workspace-panel" role="tabpanel" tabIndex={0} aria-labelledby={tab === 'route' ? 'route-tab' : 'model-tab'}><div className="workspace-view" hidden={tab !== 'route'}><RouteMap route={route} inspection={inspection} options={options} pending={inspectionPending} locked={controlsLocked} onCenter={moveCenter} onChange={changeFraming} /></div>{tab === 'model' && <TerrainView preview={preview} routeColor={options.routeColor} />}{previewPending && tab === 'model' && <div className="preview-loading" role="status">正在加载最终模型…</div>}</div>
         <div className="model-summary">{job?.result && previewId === job.id ? <><div><span>成品外尺寸</span><strong>{job.result.dimensions.x.toFixed(2)} × {job.result.dimensions.y.toFixed(2)} × {job.result.dimensions.z.toFixed(2)} <small>mm</small></strong><span className="model-dem-source" title={sourceLabel(job.result.demSource)}>{sourceLabel(job.result.demSource)}</span></div><div><span>打印文件</span><strong>一个 STL · 一个闭合实体</strong></div><div><span>三角面</span><strong>{job.result.triangleCount.toLocaleString('zh-CN')}</strong></div></> : <><div><span>打印结构</span><strong>山体＋路线＋一体底座</strong></div><p>地图取景后生成模型，可旋转检查实际成品。</p></>}</div>
       </section>
     </main>
-    <footer className="task-footer"><div className="task-status"><div className="status-line"><span className={`status-dot${running ? ' active' : job?.state === 'succeeded' ? ' complete' : ''}`} /><span role="status">{status}</span>{running && <strong>{Math.round(Math.min(1, Math.max(0, job!.progress)) * 100)}%</strong>}</div>{running && <div className="progress-track" role="progressbar" aria-label="模型生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job!.progress * 100)}><span style={{ width: `${Math.min(1, Math.max(0, job!.progress)) * 100}%` }} /></div>}{savedPath && <p className="saved-path" title={savedPath}>已保存：{savedPath}</p>}{(error || job?.error?.message || configError || inspectionError) && <p className="task-error" role="alert">{error || job?.error?.message || configError || inspectionError}</p>}{!running && !error && !job?.error && !configError && !inspectionError && !savedPath && <p className="footer-hint">STL 不保存颜色；红色仅用于预览路线。</p>}</div><div className="task-actions">{running ? <button onClick={() => void cancel()} disabled={job?.state === 'cancelling'}>{job?.state === 'cancelling' ? '正在取消' : '取消生成'}</button> : <button className="primary-button" onClick={generate} disabled={!canGenerate}>{job?.state === 'succeeded' || preview ? '重新生成' : '生成模型'}</button>}<button onClick={save} disabled={!canSave}>保存 STL</button></div></footer>
+    <footer className="task-footer"><div className="task-status"><div className="status-line"><span className={`status-dot${running ? ' active' : job?.state === 'succeeded' ? ' complete' : ''}`} /><span role="status">{status}</span>{running && <strong>{Math.round(Math.min(1, Math.max(0, job!.progress)) * 100)}%</strong>}</div>{running && <div className="progress-track" role="progressbar" aria-label="模型生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job!.progress * 100)}><span style={{ width: `${Math.min(1, Math.max(0, job!.progress)) * 100}%` }} /></div>}{savedPath && <p className="saved-path" title={savedPath}>已保存：{savedPath}</p>}{(error || job?.error?.message || configError || inspectionError) && <p className="task-error" role="alert">{error || job?.error?.message || configError || inspectionError}</p>}{!running && !error && !job?.error && !configError && !inspectionError && !savedPath && <p className="footer-hint">STL 不保存颜色；路线颜色用于地图和三维预览。</p>}</div><div className="task-actions">{running ? <button onClick={() => void cancel()} disabled={job?.state === 'cancelling'}>{job?.state === 'cancelling' ? '正在取消' : '取消生成'}</button> : <button className="primary-button" onClick={generate} disabled={!canGenerate}>{job?.state === 'succeeded' || preview ? '重新生成' : '生成模型'}</button>}<button onClick={save} disabled={!canSave}>保存 STL</button></div></footer>
     {dragging && <div className="drop-overlay"><div><h2>松开以导入文件</h2><p>GPX 路线 · GeoTIFF 高程</p></div></div>}
   </div>;
 }

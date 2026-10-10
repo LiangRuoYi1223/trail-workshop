@@ -3,9 +3,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Preview } from '../types';
 
-export default function TerrainView({ preview }: { preview: Preview | null }) {
+export default function TerrainView({ preview, routeColor }: { preview: Preview | null; routeColor: string }) {
   const container = useRef<HTMLDivElement>(null);
   const actions = useRef<{ reset(): void; top(): void } | null>(null);
+  const recolor = useRef<((value:string)=>void) | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     const host = container.current;
@@ -35,7 +36,7 @@ export default function TerrainView({ preview }: { preview: Preview | null }) {
       const { positions, indices, faceKinds } = preview.mesh;
       const expanded = new Float32Array(indices.length * 3), colors = new Float32Array(indices.length * 3);
       const palette: Record<string, THREE.Color> = {
-        terrain: new THREE.Color('#799278'), route: new THREE.Color('#c84832'), 'route-wall': new THREE.Color('#b4412f'),
+        terrain: new THREE.Color('#799278'), route: new THREE.Color(routeColor), 'route-wall': new THREE.Color(routeColor).multiplyScalar(.78),
         frame: new THREE.Color('#c7c2ab'), wall: new THREE.Color('#a9aa92'), bottom: new THREE.Color('#a9aa92'),
       };
       for (let i = 0; i < indices.length; i++) {
@@ -66,6 +67,14 @@ export default function TerrainView({ preview }: { preview: Preview | null }) {
         frame = requestAnimationFrame(() => { frame = undefined; if (!disposed && renderer) renderer.render(scene, camera); });
       };
       controls.addEventListener('change', draw);
+      recolor.current = value => {
+        const top = new THREE.Color(value), wall = top.clone().multiplyScalar(.78);
+        for (let i=0;i<indices.length;i++) {
+          const kind=faceKinds?.[Math.floor(i/3)];
+          if (kind==='route' || kind==='route-wall') (kind==='route' ? top : wall).toArray(colors,i*3);
+        }
+        geometry!.getAttribute('color').needsUpdate=true; draw();
+      };
       const corners: THREE.Vector3[] = [];
       for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z).sub(center));
       const fit = (direction: THREE.Vector3) => {
@@ -113,14 +122,16 @@ export default function TerrainView({ preview }: { preview: Preview | null }) {
         renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
       }
       actions.current = null;
+      recolor.current = null;
     };
   }, [preview]);
+  useEffect(() => { recolor.current?.(routeColor); }, [routeColor]);
   if (!preview) return <div className="workspace-empty"><h2>等待生成三维地形</h2><p>导入路线，检查地图取景和尺寸，再点击“生成模型”。</p><p className="empty-contract">山体、浮雕路线和底座将生成一个完整实体。</p></div>;
   return <div className="terrain-view">
     <div ref={container} className="terrain-canvas" />
     {error ? <div role="alert" className="render-error">{error}</div> : <>
       <div className="view-actions"><button onClick={() => actions.current?.top()}>俯视</button><button onClick={() => actions.current?.reset()}>恢复视角</button></div>
-      <div className="view-caption"><span><i className="legend-dot terrain-dot" />山体</span><span><i className="legend-dot route-dot" />路线</span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
+      <div className="view-caption"><span><i className="legend-dot terrain-dot" />山体</span><span><i className="legend-dot route-dot" style={{background:routeColor}} />路线</span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
     </>}
   </div>;
 }

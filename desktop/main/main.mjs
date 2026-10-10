@@ -10,7 +10,7 @@ import { saveModelStl, StlSaveError } from './save-stl.mjs';
 import { cacheDirectoryBytes, clearOwnedCacheDirectory, createMapCache } from './map-cache.mjs';
 import { createSessionStore } from './session.mjs';
 
-const VERSION = '0.3.4';
+const VERSION = '0.3.5';
 const developmentRoot = fileURLToPath(new URL('../../', import.meta.url));
 const argument = name => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 const dataDirectory = argument('data-dir');
@@ -160,7 +160,7 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: '剪切', role: 'cut' }, { label: '复制', role: 'copy' }, { label: '粘贴', role: 'paste' }, { label: '全选', role: 'selectAll' }] },
   { label: '帮助', submenu: [{ label: '第三方许可与示例数据', click: () => shell.openPath(join(applicationRoot, app.isPackaged ? 'licenses' : 'desktop/licenses')) },
     { label: '关于徒步地形工坊', click: () => dialog.showMessageBox(window, { type: 'info', title: '徒步地形工坊',
-    message: `徒步地形工坊 ${VERSION}`, detail: '导入或拖入 GPX，调整地图取景，自动获取高程并生成一个一体 STL。路线沿地形凸起 1 mm。\n本版本为阶段 3.3 个人验证版，可恢复上次项目。' }) }] },
+    message: `徒步地形工坊 ${VERSION}`, detail: '导入或拖入 GPX，调整地图取景，自动获取高程并生成一个一体 STL。路线颜色、宽度和凸起厚度均可设置。\n本版本为阶段 3.3 个人验证版，可恢复上次项目。' }) }] },
 ]));
 
 window = new BrowserWindow({ title: '徒步地形工坊', ...requestedSize, minWidth: 960, minHeight: 720,

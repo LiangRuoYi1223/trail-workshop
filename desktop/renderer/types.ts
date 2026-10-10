@@ -5,7 +5,7 @@ export interface ModelOptions {
   shape: 'rectangle' | 'circle' | 'polygon'; widthMm: number; heightMm: number; polygonSides: number;
   cornerRadiusMm: number; bearingDeg: number; paddingFraction: number; baseThicknessMm: number;
   zExaggeration: number; gridColumns: number; smoothing: 'raw' | 'light' | 'medium' | 'heavy';
-  routeWidthMm: number; frameWidthMm: number;
+  routeWidthMm: number; routeHeightMm: number; routeColor: string; frameWidthMm: number;
   center?: GeoPoint; groundWidthM?: number;
 }
 export interface RouteInfo {

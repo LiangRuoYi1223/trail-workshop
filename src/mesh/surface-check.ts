@@ -2,7 +2,7 @@ import { TerrainError } from '../errors.js';
 import type { TerrainMeshPayload } from '../vendor/trailprint/types.js';
 
 /** Independently sample the original emitted triangle planes at the final XY coordinates. */
-export function checkIntegratedSurfaceHeights(source:TerrainMeshPayload,mesh:TerrainMeshPayload) {
+export function checkIntegratedSurfaceHeights(source:TerrainMeshPayload,mesh:TerrainMeshPayload,routeHeightMm=1) {
   const cells=new Map<string,number[]>(),points=source.positions;
   let radius=0;for(let i=0;i<points.length;i+=3)radius=Math.max(radius,Math.abs(points[i]),Math.abs(points[i+1]));
   const step=Math.max(0.5,radius*2/(Math.max(source.gridCols,source.gridRows)-1));
@@ -38,13 +38,13 @@ export function checkIntegratedSurfaceHeights(source:TerrainMeshPayload,mesh:Ter
     for(let k=0;k<3;k++)set.add(mesh.indices[face*3+k]);
   }
   for(const [kind,vertices] of [['route',routeVertices],['terrain',terrainVertices]] as const)for(const vertex of vertices) {
-    const [x,y,z]=mesh.positions.slice(vertex*3,vertex*3+3),expected=kind==='route'?1:0;
+    const [x,y,z]=mesh.positions.slice(vertex*3,vertex*3+3),expected=kind==='route'?routeHeightMm:0;
     const error=Math.abs(z-surfaceAt(x,y)-expected);
     const stlError=Math.abs(Math.fround(z)-surfaceAt(Math.fround(x),Math.fround(y))-expected);
     if(kind==='route'){routeError=Math.max(routeError,error);routeStlError=Math.max(routeStlError,stlError);}
     else{terrainError=Math.max(terrainError,error);terrainStlError=Math.max(terrainStlError,stlError);}
   }
   const max=Math.max(routeError,routeStlError,terrainError,terrainStlError);
-  if(max>0.001)throw new TerrainError('MODEL_SURFACE_MISMATCH',`地表或 1 mm 路线高度残差 ${max.toFixed(6)} mm 超过 0.001 mm 容差`);
+  if(max>0.001)throw new TerrainError('MODEL_SURFACE_MISMATCH',`地表或 ${routeHeightMm} mm 路线高度残差 ${max.toFixed(6)} mm 超过 0.001 mm 容差`);
   return {routeErrorMm:routeError,routeStlErrorMm:routeStlError,terrainErrorMm:terrainError,terrainStlErrorMm:terrainStlError,toleranceMm:0.001,routeVertexCount:routeVertices.size,terrainVertexCount:terrainVertices.size};
 }

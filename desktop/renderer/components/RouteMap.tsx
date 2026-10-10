@@ -26,16 +26,16 @@ const ROTATION_ICON = L.divIcon({ className: 'map-rotation-marker', iconSize: [3
 
 export default function RouteMap(props: Props) {
   if (!props.route) return <div className="workspace-empty"><h2>先导入一条路线</h2><p>选择两步路导出的 GPX，在地图上调整地形范围，再生成打印模型。</p><p className="empty-contract">自动获取高程，也可选用本地高程文件。</p></div>;
-  return <MapBoundary key={props.route.id} inspection={props.inspection} pending={props.pending}><MapScene {...props} route={props.route} /></MapBoundary>;
+  return <MapBoundary key={props.route.id} inspection={props.inspection} pending={props.pending} routeColor={props.options.routeColor} routeWidthMm={props.options.routeWidthMm}><MapScene {...props} route={props.route} /></MapBoundary>;
 }
 
-class MapBoundary extends Component<{ children: ReactNode; inspection: Inspection | null; pending: boolean }, { failed: boolean }> {
+class MapBoundary extends Component<{ children: ReactNode; inspection: Inspection | null; pending: boolean; routeColor:string; routeWidthMm:number }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: Error, info: ErrorInfo) { console.error('地图显示异常', error, info.componentStack); }
   render() {
     if (!this.state.failed) return this.props.children;
-    return <div className="route-view"><RouteView inspection={this.props.inspection} pending={this.props.pending} /><div className="map-notice map-notice-warning" role="alert">地图显示暂时中断，可用左侧取景参数继续建模。</div><div className="map-actions"><button onClick={() => this.setState({ failed: false })}>重试地图</button></div></div>;
+    return <div className="route-view"><RouteView inspection={this.props.inspection} pending={this.props.pending} routeColor={this.props.routeColor} routeWidthMm={this.props.routeWidthMm} /><div className="map-notice map-notice-warning" role="alert">地图显示暂时中断，可用左侧取景参数继续建模。</div><div className="map-actions"><button onClick={() => this.setState({ failed: false })}>重试地图</button></div></div>;
   }
 }
 
@@ -159,6 +159,10 @@ function MapScene({ route, inspection, options, pending, locked, onCenter, onCha
   }, [route]);
 
   useEffect(() => {
+    routesRef.current?.eachLayer(layer=>{if(layer instanceof L.Path)layer.setStyle({ color:options.routeColor, weight:Number.isFinite(options.routeWidthMm) ? Math.max(1.5,options.routeWidthMm*3) : 3 });});
+  }, [route,options.routeColor,options.routeWidthMm]);
+
+  useEffect(() => {
     const map = mapRef.current;
     const focusedVertex = verticesRef.current.findIndex(marker=>marker.getElement()===document.activeElement);
     verticesRef.current.forEach(marker => marker.remove()); verticesRef.current = [];
@@ -280,6 +284,6 @@ function MapScene({ route, inspection, options, pending, locked, onCenter, onCha
     {menu && <div className="map-center-menu" role="menu" aria-label="取景中心操作" style={{left:menu.x,top:menu.y}} onKeyDown={event=>{if(event.key==='Tab'){setMenu(null);}}}><button role="menuitem" ref={menuButton} onClick={()=>{focusRotation.current=true;setMenu(null);setChoosing(false);setRotating(true);}}>旋转取景</button><button role="menuitem" onClick={()=>{setMenu(null);if(inspection)onChange({...options,center:inspection.selection.center,groundWidthM:inspection.selection.groundWidthM,bearingDeg:0});}}>恢复朝向</button></div>}
     {rotating && <div className="map-rotation-status" role="status">拖动圆形手柄旋转 · {rotationAngle.toFixed(1)}°<button onClick={()=>setRotating(false)}>完成</button></div>}
     {(choosing || pending || mapError || editError || tileError && basemap) && <div className={`map-notice${tileError || mapError || editError ? ' map-notice-warning' : ''}`} role="status">{mapError || editError || (choosing ? '点击地图，移动取景中心。' : pending ? '正在更新取景范围…' : '底图未完整加载。路线与取景仍可调整，不影响建模。')}</div>}
-    <div className="map-caption"><span><i className="legend-line" />GPX 路线</span><span><i className="legend-outline" />山体取景</span>{inspection && <span>地面 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km</span>}<span className="map-help">拖动顶点调整范围 · 拖动十字移动 · 右键中心旋转</span></div>
+    <div className="map-caption"><span><i className="legend-line" style={{borderColor:options.routeColor}} />GPX 路线</span><span><i className="legend-outline" />山体取景</span>{inspection && <span>地面 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km</span>}<span className="map-help">拖动顶点调整范围 · 拖动十字移动 · 右键中心旋转</span></div>
   </div>;
 }

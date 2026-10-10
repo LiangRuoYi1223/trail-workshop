@@ -122,6 +122,43 @@ test('narrow 1 mm relief survives a coarse DEM grid and is integral with the sou
   close(assertPrintableMesh(result.mesh).bounds.size.x, 20);
 });
 
+test('selected route thickness changes relief and volume without changing the terrain or corridor width', () => {
+  const source = terrain(rectangle, 5, 5, (x, y) => 0.2 * (x + 10) + 0.1 * (y + 10));
+  const request = { terrainMesh: source, routeSegmentsMm: [[{ x: -8, y: 0 }, { x: 8, y: 0 }]], routeWidthMm: 2, frameWidthMm: 0 };
+  const defaultResult = buildIntegratedTerrainMesh(request);
+  for (const routeHeightMm of [0.1, 2.5, 10]) {
+    const result = buildIntegratedTerrainMesh({ ...request, routeHeightMm });
+    close(topHeightAt(result.mesh, { x: 0, y: 0 }), 5 + routeHeightMm);
+    close(topHeightAt(result.mesh, { x: 0, y: 2 }), 5.2);
+    close(result.report.route.areaMm2, defaultResult.report.route.areaMm2);
+    assert.equal(result.report.route.widthMm, 2);
+    assert.equal(result.report.route.heightMm, routeHeightMm);
+    for (let face = 0; face < result.mesh.indices.length / 3; face++) {
+      const kind = result.mesh.faceKinds?.[face];
+      if (kind !== 'route' && kind !== 'terrain') continue;
+      for (const vertex of result.mesh.indices.slice(face * 3, face * 3 + 3)) {
+        const [x, y, z] = result.mesh.positions.slice(vertex * 3, vertex * 3 + 3);
+        close(z - (5 + 0.2 * x + 0.1 * y), kind === 'route' ? routeHeightMm : 0);
+      }
+    }
+    close(signedVolume(result.mesh) - signedVolume(source), result.report.route.areaMm2 * routeHeightMm, 2e-4);
+    close(result.report.expectedAddedVolumeMm3, result.report.route.areaMm2 * routeHeightMm);
+    const validation = assertPrintableMesh(result.mesh);
+    assert.equal(validation.connectedComponents, 1);
+    assert.equal(validation.boundaryEdges, 0);
+    assert.equal(validation.nonManifoldEdges, 0);
+    close(validation.bounds.size.x, 20);
+    close(validation.bounds.size.y, 20);
+  }
+});
+
+test('integrated mesh rejects unprintable or nonfinite route thickness', () => {
+  const request = { terrainMesh: terrain(), routeSegmentsMm: [[{ x: -4, y: 0 }, { x: 4, y: 0 }]] };
+  for (const routeHeightMm of [0.099, 10.001, NaN, Infinity, -Infinity]) {
+    assert.throws(() => buildIntegratedTerrainMesh({ ...request, routeHeightMm }), { code: 'CONFIG_INVALID' });
+  }
+});
+
 test('new route vertices follow the original tilted DEM triangle planes before adding 1 mm', () => {
   const source = terrain(rectangle, 5, 5, (x, y) => 0.2 * (x + 10) + 0.1 * (y + 10));
   const result = buildIntegratedTerrainMesh({ terrainMesh: source, routeSegmentsMm: [[{ x: -7, y: -5 }, { x: 7, y: 5 }]], frameWidthMm: 0 });

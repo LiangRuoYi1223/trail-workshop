@@ -204,6 +204,44 @@ test('options reject unknown fields, unsupported scales and invalid values befor
   assert.equal(f.children.length, 0);
 });
 
+test('route appearance defaults preserve the existing relief and stay outside worker geometry', async t => {
+  const f = await fixture(t), job = await f.start({});
+  assert.equal(job.options.routeHeightMm, 1);
+  assert.equal(job.options.routeColor, '#c84832');
+  assert.equal(f.children[0].request.options.routeHeightMm, 1);
+  assert.equal(f.children[0].request.options.routeColor, undefined);
+  assert.ok(Object.isFrozen(f.children[0].request.options));
+});
+
+test('route settings accept height endpoints and normalize color without changing the crop', async t => {
+  const f = await fixture(t), before = await f.manager.inspect({ routeId: f.route.id, options: {} });
+  for (const routeHeightMm of [0.1, 10]) {
+    const options = { routeHeightMm, routeColor: '#12ABF0', routeWidthMm: 2.5 };
+    const after = await f.manager.inspect({ routeId: f.route.id, options });
+    assert.deepEqual(after, before);
+    const job = await f.start(options);
+    options.routeHeightMm = 5; options.routeColor = '#ffffff';
+    assert.equal(job.options.routeHeightMm, routeHeightMm);
+    assert.equal(job.options.routeColor, '#12abf0');
+    assert.equal(f.children.at(-1).request.options.routeHeightMm, routeHeightMm);
+    assert.equal(f.children.at(-1).request.options.routeWidthMm, 2.5);
+    assert.equal(f.children.at(-1).request.options.routeColor, undefined);
+    f.manager.cancel(job.id);
+    await waitFor(() => f.manager.get(job.id).state === 'cancelled');
+  }
+});
+
+test('invalid route heights and non-RGB colors are rejected before worker launch', async t => {
+  const f = await fixture(t);
+  for (const routeHeightMm of [0, 0.09, 10.01, Infinity, NaN, '1', null]) {
+    await assert.rejects(f.start({ routeHeightMm }), { code: 'CONFIG_INVALID' });
+  }
+  for (const routeColor of ['red', '#fff', '#12345678', '123456', '#zzzzzz', '#123456 ', '', null, 123456]) {
+    await assert.rejects(f.start({ routeColor }), { code: 'CONFIG_INVALID' });
+  }
+  assert.equal(f.children.length, 0);
+});
+
 test('one task freezes caller parameters and blocks a second task until actual worker exit', async t => {
   const f = await fixture(t, { manualExit: true });
   const options = { widthMm: 100, center: { lat: 30.565, lon: 104.29 } };
@@ -308,6 +346,33 @@ test('real isolated Node process generates the approved sample and verifies matc
   assert.ok(preview.mesh.faceKinds.includes('route')); assert.ok(preview.mesh.faceKinds.includes('frame'));
   const artifact = await f.manager.artifact(job.id); assert.equal((await readFile(artifact.path)).length, artifact.bytes);
   assert.ok(f.events.some(event => event.progress > 0 && event.progress < 1));
+});
+
+test('isolated worker applies route thickness while preview color leaves saved STL bytes unchanged', async t => {
+  const workers = [];
+  const f = await fixture(t, { timeout: 30000, factory: ({ workerPath }) => {
+    const worker = fork(workerPath, { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }); workers.push(worker);
+    return { on: (...args) => worker.on(...args), once: (...args) => worker.once(...args),
+      postMessage: value => worker.send(value), kill: () => worker.kill() };
+  } });
+  t.after(() => { workers.forEach(worker => { if (worker.exitCode === null) worker.kill(); }); });
+  const route = await f.manager.addRoute(join(project, 'fixtures/sample-trail.gpx'));
+  const dem = await f.manager.addDem(join(project, 'data/copernicus-longquanshan.tif'));
+  const artifacts = [];
+  for (const [routeHeightMm, routeColor] of [[2.4, '#ff0000'], [2.4, '#0000ff'], [1, '#0000ff']]) {
+    const job = await f.manager.start({ routeId: route.id, demId: dem.id,
+      options: { gridColumns: 33, routeWidthMm: 1.8, routeHeightMm, routeColor } });
+    await waitFor(() => ['succeeded', 'failed'].includes(f.manager.get(job.id).state));
+    const final = f.manager.get(job.id); assert.equal(final.state, 'succeeded', JSON.stringify(final.error));
+    const preview = await f.manager.preview(job.id);
+    assert.equal(preview.report.config.routeHeightMm, routeHeightMm);
+    assert.equal(preview.report.config.routeWidthMm, 1.8);
+    assert.equal(preview.report.integratedModel.route.heightMm, routeHeightMm);
+    assert.ok(preview.report.integratedModel.route.maxStlHeightErrorMm <= 0.001);
+    artifacts.push(await f.manager.artifact(job.id));
+  }
+  assert.deepEqual(await readFile(artifacts[0].path), await readFile(artifacts[1].path));
+  assert.notEqual(artifacts[0].stlSha256, artifacts[2].stlSha256);
 });
 
 test('isolated automatic worker uses frozen bounds, reports measured DEM progress and returns a matching STL', async t => {

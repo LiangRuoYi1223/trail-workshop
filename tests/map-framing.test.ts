@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as framing from '../desktop/renderer/framing.js';
 import type { ModelOptions } from '../desktop/renderer/types.js';
 const defaults: ModelOptions = { shape:'rectangle', widthMm:120, heightMm:80, polygonSides:6, cornerRadiusMm:0,
-  bearingDeg:0, paddingFraction:.1, baseThicknessMm:2, zExaggeration:2, gridColumns:65, smoothing:'raw', routeWidthMm:1, frameWidthMm:3 };
+  bearingDeg:0, paddingFraction:.1, baseThicknessMm:2, zExaggeration:2, gridColumns:65, smoothing:'raw', routeWidthMm:1, routeHeightMm:1, routeColor:'#c84832', frameWidthMm:3 };
 const selection = { center:{lat:0,lon:0},groundWidthM:4000,groundHeightM:8000/3,bearingDeg:0 };
 test('dragging a regular polygon vertex doubles its ground size without changing print size or shape', () => {
   const resize = (framing as any).optionsFromVertex;

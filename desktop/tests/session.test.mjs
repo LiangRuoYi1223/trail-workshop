@@ -57,6 +57,41 @@ test('default startup is usable and recovery never starts computation', async t 
   assert.equal(f.workerCount(), 0);
 });
 
+test('route color, width and height survive restart and explicit project restoration', async t => {
+  const f = await fixture(t);
+  await f.store.saveSession({ ...f.request, options: { ...options, routeColor: '#12ABF0', routeWidthMm: 2.4, routeHeightMm: 3.5 } });
+  await f.store.close();
+  const next = f.fresh(), startup = await next.store.getSession(), restored = await next.store.restoreSession();
+  for (const settings of [startup.preferences.options, restored.options]) {
+    assert.equal(settings.routeColor, '#12abf0');
+    assert.equal(settings.routeWidthMm, 2.4);
+    assert.equal(settings.routeHeightMm, 3.5);
+  }
+  assert.ok(restored.route); assert.deepEqual(restored.warnings, []); assert.equal(f.workerCount(), 0);
+});
+
+test('legacy sessions missing route appearance fields restore the existing red one-millimeter relief', async t => {
+  const f = await fixture(t); await f.store.saveSession(f.request); await f.store.close();
+  const stored = JSON.parse(await readFile(f.sessionPath, 'utf8'));
+  for (const settings of [stored.preferences.options, stored.recentProject.options]) {
+    delete settings.routeColor; delete settings.routeHeightMm;
+  }
+  await writeFile(f.sessionPath, JSON.stringify(stored));
+  const next = f.fresh(), startup = await next.store.getSession(), restored = await next.store.restoreSession();
+  for (const settings of [startup.preferences.options, restored.options]) {
+    assert.equal(settings.routeColor, '#c84832'); assert.equal(settings.routeHeightMm, 1);
+  }
+  assert.ok(restored.route); assert.deepEqual(restored.warnings, []);
+});
+
+test('invalid route color or height never replaces the last saved project', async t => {
+  const f = await fixture(t); await f.store.saveSession(f.request); const before = await readFile(f.sessionPath);
+  for (const patch of [{ routeColor: '#ff' }, { routeColor: 'rgb(10,20,30)' }, { routeHeightMm: 0 }, { routeHeightMm: 10.1 }]) {
+    await assert.rejects(f.store.saveSession({ ...f.request, options: { ...options, ...patch } }), { code: 'CONFIG_INVALID' });
+  }
+  assert.deepEqual(await readFile(f.sessionPath), before);
+});
+
 test('preference-only saves preserve the last imported project without applying its geography', async t => {
   const f = await fixture(t); await f.store.saveSession(f.request);
   await f.store.saveSession({ demMode: 'auto', offlineOnly: false, options: { widthMm: 200, center: { lat: 40, lon: 110 }, groundWidthM: 20000 } });

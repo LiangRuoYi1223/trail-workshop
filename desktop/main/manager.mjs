@@ -222,9 +222,13 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
           if (!job.stopReason) stop(job, { state: 'cancelled' });
           else { try { child.kill(); } catch { /* Wait for the real exit event. */ } }
         }
-        else child.postMessage({ type: 'generate', jobId: id, gpxXml: route.xml, fileName: route.info.fileName, demMode: mode,
-          ...(mode === 'local' ? { demPath: dem.path, demSourcePath: dem.sourcePath } : { demCacheDir: cacheDir, offlineOnly }),
-          bounds, options: validated, taskDir: job.taskDir, coreModuleUrl });
+        else {
+          // Preview color belongs to the saved project, not the STL geometry.
+          const { routeColor, ...geometryOptions } = validated;
+          child.postMessage({ type: 'generate', jobId: id, gpxXml: route.xml, fileName: route.info.fileName, demMode: mode,
+            ...(mode === 'local' ? { demPath: dem.path, demSourcePath: dem.sourcePath } : { demCacheDir: cacheDir, offlineOnly }),
+            bounds, options: Object.freeze(geometryOptions), taskDir: job.taskDir, coreModuleUrl });
+        }
       } catch (error) {
         if (job.child && !job.exited) stop(job, { state: 'failed', error: publicError(error, '无法启动计算任务，请检查临时目录权限') });
         else {

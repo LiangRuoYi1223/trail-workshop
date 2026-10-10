@@ -14,14 +14,15 @@ interface XY extends IntPoint {baseZ:number}
 export interface IntegratedMeshRequest {
   terrainMesh:TerrainMeshPayload;
   routeSegmentsMm:Array<Array<{x:number;y:number}>>;
-  routeWidthMm?:number; frameWidthMm?:number; baseThicknessMm?:number;
+  routeWidthMm?:number; routeHeightMm?:number; frameWidthMm?:number; baseThicknessMm?:number;
   signal?:AbortSignal;
 }
 
 /** A partition of the source surface, one raised region, and an integral flat ledge. No internal skins. */
 export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
-  const source=input.terrainMesh,routeWidth=input.routeWidthMm ?? 1,frameWidth=input.frameWidthMm ?? 3,base=input.baseThicknessMm ?? 2;
+  const source=input.terrainMesh,routeWidth=input.routeWidthMm ?? 1,routeHeight=input.routeHeightMm ?? 1,frameWidth=input.frameWidthMm ?? 3,base=input.baseThicknessMm ?? 2;
   if(!Number.isFinite(routeWidth)||routeWidth<0.4||routeWidth>5)throw new TerrainError('CONFIG_INVALID','路线宽度须在 0.4–5 mm 之间');
+  if(!Number.isFinite(routeHeight)||routeHeight<0.1||routeHeight>10)throw new TerrainError('CONFIG_INVALID','路线厚度须在 0.1–10 mm 之间');
   if(!Number.isFinite(frameWidth)||frameWidth<0||frameWidth>20)throw new TerrainError('CONFIG_INVALID','一体边框宽度须在 0–20 mm 之间');
   if(!Number.isFinite(base)||base<0.5||base>30)throw new TerrainError('CONFIG_INVALID','基础底厚须在 0.5–30 mm 之间');
   input.signal?.throwIfAborted();
@@ -167,7 +168,7 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
     const index=positions.length/3;positions.push(p.X/SCALE,p.Y/SCALE,height);vertexMap.set(key,index);return index;
   };
   const face=(a:number,b:number,c:number,kind:Kind)=>{if(a===b||b===c||c===a)return;meshIndices.push(a,b,c);faceKinds.push(kind);if(faceKinds.length>MAX_MESH_TRIANGLES)throw new TerrainError('MESH_TOO_COMPLEX','一体模型超过 50 万三角面预算');};
-  const heightFor=(id:number,kind:TopKind)=>kind==='frame'?base:xy[id].baseZ+(kind==='route'?1:0);
+  const heightFor=(id:number,kind:TopKind)=>kind==='frame'?base:xy[id].baseZ+(kind==='route'?routeHeight:0);
   const adjacency=new Map<string,Array<{a:number;b:number;kind:TopKind}>>();
   const levels=new Map<number,Set<number>>();
   const routeVertices=new Set<number>();let routeArea=0,terrainArea=0;
@@ -208,9 +209,9 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
   const areaTolerance=Math.max(1e-5,corridorPerimeter/SCALE*4);
   if(Math.abs(routeArea-corridor.areaMm2)>areaTolerance)throw new TerrainError('MESH_AREA_MISMATCH',`路线分区面积与走廊并集不一致（${routeArea} / ${corridor.areaMm2} mm²）`);
   const mesh:TerrainMeshPayload={positions,indices:meshIndices,faceKinds,minSurfaceZ:base,bottomZ:0,gridCols:source.gridCols,gridRows:source.gridRows};
-  const surfaceCheck=checkIntegratedSurfaceHeights(source,mesh);
+  const surfaceCheck=checkIntegratedSurfaceHeights(source,mesh,routeHeight);
   return {mesh,report:{algorithm:'source-triangle-partition-with-shared-boundary-noding',coordinateToleranceMm:1/SCALE,affectedSourceTriangles,
-    surfaceCheck,route:{heightMm:1,widthMm:routeWidth,areaMm2:routeArea,corridorAreaMm2:corridor.areaMm2,areaErrorMm2:Math.abs(routeArea-corridor.areaMm2),areaToleranceMm2:areaTolerance,topVertexCount:routeVertices.size,maxHeightErrorMm:surfaceCheck.routeErrorMm,maxStlHeightErrorMm:surfaceCheck.routeStlErrorMm,segmentCount:corridor.effectiveSegmentCount,arcToleranceMm:corridor.arcToleranceMm},
+    surfaceCheck,route:{heightMm:routeHeight,widthMm:routeWidth,areaMm2:routeArea,corridorAreaMm2:corridor.areaMm2,areaErrorMm2:Math.abs(routeArea-corridor.areaMm2),areaToleranceMm2:areaTolerance,topVertexCount:routeVertices.size,maxHeightErrorMm:surfaceCheck.routeErrorMm,maxStlHeightErrorMm:surfaceCheck.routeStlErrorMm,segmentCount:corridor.effectiveSegmentCount,arcToleranceMm:corridor.arcToleranceMm},
     frame:{widthMm:frameWidth,areaMm2:frameArea,topZMm:base,style:frameWidth?'flat-integral-ledge':'none'},terrainAreaMm2:terrainArea+routeArea,
-    expectedAddedVolumeMm3:routeArea+frameArea*base,outerPathsMm:outerPaths.map(path=>path.map(p=>({x:p.X/SCALE,y:p.Y/SCALE})))}};
+    expectedAddedVolumeMm3:routeArea*routeHeight+frameArea*base,outerPathsMm:outerPaths.map(path=>path.map(p=>({x:p.X/SCALE,y:p.Y/SCALE})))}};
 }

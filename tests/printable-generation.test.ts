@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { TerrainError } from '../src/errors.js';
 import { createTerrainFrame } from '../src/geo/frame.js';
 import { generateTerrain } from '../src/generate-terrain.js';
 import { generatePrintableTerrain } from '../src/generate-printable-terrain.js';
 import { buildIntegratedTerrainMesh } from '../src/mesh/integrated-model.js';
 import { assertPrintableMesh, type PrintableMeshReport } from '../src/mesh/validate.js';
+import { readBinaryStl } from '../src/mesh/sections.js';
+import { writeBinaryStl } from '../src/vendor/trailprint/stl-writer.js';
 import type { GenerationResult, PrintableTerrainOptions } from '../src/types.js';
 import type { TerrainMeshPayload } from '../src/vendor/trailprint/types.js';
 
@@ -99,6 +104,55 @@ test('custom frame width expands actual exterior dimensions by twice its width; 
     assert.equal(report.frame.style, frameWidthMm === 0 ? 'none' : 'flat-integral-ledge');
     assert.equal(report.frame.areaMm2 === 0, frameWidthMm === 0);
     assert.equal(result.mesh.faceKinds?.includes('frame'), frameWidthMm > 0);
+  }
+});
+
+test('selected thickness reaches the generated and saved closed STL rather than only its report', async () => {
+  const config = { ...options, routeWidthMm: 2, routeHeightMm: 2.5, frameWidthMm: 0 };
+  const loadDem = async () => ({ sample: () => 500, metadata: { provider: 'flat-thickness-test' } });
+  const source = await generateTerrain({ gpxXml, options: config, loadDem });
+  const result = await generatePrintableTerrain({ gpxXml, options: config, loadDem });
+  assert.deepEqual(result.heightfield, source.heightfield);
+  assert.deepEqual(result.routeSegmentsMm, source.routeSegmentsMm);
+  assert.equal((result.report.config as typeof config).routeHeightMm, 2.5);
+  assert.equal(integratedReport(result).route.heightMm, 2.5);
+  const directory = await mkdtemp(join(tmpdir(), 'route-thickness-'));
+  try {
+    const path = join(directory, 'thick-route.stl');
+    await writeBinaryStl(path, result.mesh);
+    const stl = readBinaryStl(await readFile(path));
+    let routeFaces = 0, terrainFaces = 0;
+    for (let face = 0; face < stl.triangleCount; face++) {
+      const kind = result.mesh.faceKinds?.[face];
+      if (kind !== 'route' && kind !== 'terrain') continue;
+      if (kind === 'route') routeFaces++; else terrainFaces++;
+      for (let vertex = 0; vertex < 3; vertex++) {
+        near(stl.coordinates[face * 9 + vertex * 3 + 2], kind === 'route' ? 5.5 : 3);
+      }
+    }
+    assert.ok(routeFaces > 0 && terrainFaces > 0);
+    const validation = assertPrintableMesh({ positions: Array.from(stl.coordinates),
+      indices: Array.from({ length: stl.triangleCount * 3 }, (_, index) => index) });
+    assert.equal(validation.connectedComponents, 1);
+    assert.equal(validation.boundaryEdges, 0);
+    assert.equal(validation.nonManifoldEdges, 0);
+    near(validation.bounds.size.x, 40);
+    near(validation.bounds.size.y, 30);
+    near(validation.bounds.size.z, 5.5);
+    near(validation.volumeMm3 - signedVolume(source.mesh), integratedReport(result).route.areaMm2 * 2.5, 1e-4);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('invalid route thickness fails before DEM loading', async () => {
+  for (const routeHeightMm of [0.099, 10.001, NaN, Infinity, -Infinity]) {
+    let loaded = false;
+    const config = { ...options, routeHeightMm };
+    await assert.rejects(generatePrintableTerrain({ gpxXml, options: config, loadDem: async () => {
+      loaded = true; return planeDem(options);
+    } }), (error: unknown) => error instanceof TerrainError && error.code === 'CONFIG_INVALID');
+    assert.equal(loaded, false);
   }
 });
 
