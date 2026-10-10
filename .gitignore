@@ -1,0 +1,10 @@
+/research/
+/node_modules/
+/dist/
+/outputs/
+/data/
+/.env
+/.env.*
+/desktop/dist/
+/desktop/release/
+/artifacts/

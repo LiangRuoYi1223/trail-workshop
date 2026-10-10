@@ -1,0 +1,6 @@
+{
+  "gpx": "sample-trail.gpx",
+  "output": "../outputs/stage1/OpenTopography_Terrain.stl",
+  "dem": { "provider": "opentopography", "dataset": "COP30" },
+  "terrain": { "shape": "rectangle", "widthMm": 120, "heightMm": 80, "baseThicknessMm": 2, "zExaggeration": 2, "gridColumns": 129 }
+}

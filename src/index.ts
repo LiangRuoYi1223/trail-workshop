@@ -1,0 +1,14 @@
+export { generateTerrain } from './generate-terrain.js';
+export { generatePrintableTerrain } from './generate-printable-terrain.js';
+export { buildIntegratedTerrainMesh } from './mesh/integrated-model.js';
+export { parseGpxXml } from './gpx/parse-gpx.js';
+export { createTerrainFrame } from './geo/frame.js';
+export { buildFootprintPolygonMm } from './vendor/trailprint/footprint.js';
+export { createGeotiffSampler } from './dem/geotiff.js';
+export { loadLocalDem, loadOpenTopographyDem } from './dem/provider.js';
+export { loadCopernicusDem } from './dem/copernicus.js';
+export { assertPrintableMesh } from './mesh/validate.js';
+export { writeBinaryStl } from './vendor/trailprint/stl-writer.js';
+export { publishTerrainOutput } from './export/publish.js';
+export { TerrainError } from './errors.js';
+export type { TerrainOptions, PrintableTerrainOptions, DemSampler, GenerationResult, GenerationProgress } from './types.js';
