@@ -174,11 +174,16 @@ export default function App() {
     finally { busyRef.current = false; setBusy(''); }
   }
   const update = <K extends keyof ModelOptions>(key: K, value: ModelOptions[K]) => {
-    setOptions(previous => ({ ...previous, [key]: value, ...(key === 'shape' && value === 'circle' ? { cornerRadiusMm: 0 } : {}) }));
+    setOptions(previous => {
+      const next = { ...previous, [key]: value };
+      if (key === 'shape' && value === 'circle') next.cornerRadiusMm = 0;
+      return next;
+    });
     setError(''); setSavedPath('');
   };
-  function resetFraming() { setOptions(previous => { const { center, groundWidthM, ...automatic } = previous; return automatic; }); setError(''); setSavedPath(''); }
+  function resetFraming() { setOptions(previous => { const { center, groundWidthM, ...automatic } = previous; return { ...automatic, bearingDeg: 0 }; }); setError(''); setSavedPath(''); }
   function moveCenter(center: GeoPoint) { if (!controlsLocked) update('center', center); }
+  function changeFraming(next: ModelOptions) { if (!controlsLocked) { setOptions(next); setError(''); setSavedPath(''); } }
   function chooseRoute() { if (!api) return; void operate('正在读取路线', async () => { const selected = unwrap(await api.chooseRoute()); if (selected) { setRoute(selected); setInspection(null); resetFraming(); setTab('route'); setSavedPath(''); } }); }
   function chooseDem() { if (!api) return; void operate('正在读取高程', async () => { const selected = unwrap(await api.chooseDem()); if (selected) { setDem(selected); setDemMode('local'); setSavedPath(''); } }); }
   function loadSample() { if (!api) return; void operate('正在打开示例', async () => { const selected = unwrap(await api.loadSample()); setRoute(selected.route); setDem(selected.dem); setDemMode('local'); setOptions({ ...DEFAULTS }); setInspection(null); setTab('route'); setSavedPath(''); }); }
@@ -247,14 +252,14 @@ export default function App() {
           {sessionInfo?.recentProject && <div className="recent-project"><button onClick={restoreProject} disabled={controlsLocked || !api}>恢复上次项目</button><p title={sessionInfo.recentProject.routeFileName}>{sessionInfo.recentProject.routeName || sessionInfo.recentProject.routeFileName}</p></div>}
           {sessionMessage && <p className="session-message" role="status">{sessionMessage}</p>}
         </section>
-        <section className="control-section framing-section"><h2>地形取景</h2><div className="field-pair"><NumberField label="地面取景宽度" value={(options.groundWidthM ?? inspection?.selection.groundWidthM ?? NaN) / 1000} onChange={value => update('groundWidthM', value * 1000)} min={.001} max={100} step={.01} unit="km" disabled={controlsLocked || !route} /><NumberField label="取景旋转" value={options.bearingDeg} onChange={value => update('bearingDeg', value)} min={-180} max={180} unit="°" disabled={controlsLocked || !route} /></div>
-          <p className="field-hint">这里是实际地面范围，成品毫米尺寸在下方设置。可拖动地图十字或点选中心。</p>
-          <button className="reset-framing" onClick={resetFraming} disabled={controlsLocked || !route || (!options.center && options.groundWidthM === undefined)}>恢复自动取景</button>
+        <section className="control-section framing-section"><h2>地形取景</h2><p className="framing-instruction">拖动地图顶点等比例调整范围，拖动十字移动取景。右键中心点，选择“旋转取景”。</p>
+          {inspection && <p className="framing-measure">地面范围 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km · {options.bearingDeg.toFixed(1)}°</p>}
+          <button className="reset-framing" onClick={resetFraming} disabled={controlsLocked || !route || (!options.center && options.groundWidthM === undefined && !options.bearingDeg)}>恢复自动取景</button>
           <details className="center-details"><summary>输入取景中心</summary><div className="field-pair"><NumberField label="中心纬度" value={center?.lat ?? NaN} onChange={value => moveCenter({ lat: value, lon: center?.lon ?? NaN })} min={-80} max={80} step={.0001} unit="°" disabled={controlsLocked || !route} /><NumberField label="中心经度" value={center?.lon ?? NaN} onChange={value => moveCenter({ lat: center?.lat ?? NaN, lon: value })} min={-180} max={180} step={.0001} unit="°" disabled={controlsLocked || !route} /></div></details>
         </section>
         <section className="control-section"><h2>模型尺寸</h2><label className="select-field">成品外形<select value={options.shape} disabled={controlsLocked} onChange={event => update('shape', event.currentTarget.value as ModelOptions['shape'])}><option value="rectangle">矩形</option><option value="circle">圆形</option><option value="polygon">正多边形</option></select></label>
           {options.shape === 'polygon' && <label className="select-field">多边形边数<select value={options.polygonSides} disabled={controlsLocked} onChange={event => update('polygonSides', Number(event.currentTarget.value))}>{[3, 4, 5, 6, 7, 8].map(n => <option value={n} key={n}>{n} 边形</option>)}</select></label>}
-          <div className="field-pair"><NumberField label={options.shape === 'rectangle' ? '山体长度' : '外接圆直径'} value={options.widthMm} onChange={value => update('widthMm', value)} min={10} max={500} disabled={controlsLocked} />{options.shape === 'rectangle' && <NumberField label="山体宽度" value={options.heightMm} onChange={value => update('heightMm', value)} min={10} max={500} disabled={controlsLocked} />}</div>
+          <div className="field-pair"><NumberField label={options.shape === 'circle' ? '山体直径' : '打印长度'} value={options.widthMm} onChange={value => update('widthMm', value)} min={10} max={500} disabled={controlsLocked} />{options.shape === 'rectangle' && <NumberField label="打印宽度" value={options.heightMm} onChange={value => update('heightMm', value)} min={10} max={500} disabled={controlsLocked} />}</div>
           <p className="field-hint">外沿会增加成品外尺寸，最终尺寸见模型结果。</p>
           <div className="field-pair"><NumberField label="路线宽度" value={options.routeWidthMm} onChange={value => update('routeWidthMm', value)} min={.4} max={5} step={.1} disabled={controlsLocked} /><NumberField label="垂直夸张" value={options.zExaggeration} onChange={value => update('zExaggeration', value)} min={.1} max={20} step={.1} unit="倍" disabled={controlsLocked} /></div>
           <p className="route-contract">路线沿地表起伏，固定突出 1 mm。</p>
@@ -273,7 +278,7 @@ export default function App() {
         const next = event.key === 'Home' ? 'route' : event.key === 'End' ? 'model' : tab === 'route' ? 'model' : 'route';
         setTab(next); document.getElementById(`${next}-tab`)?.focus();
       }}><button role="tab" id="route-tab" tabIndex={tab === 'route' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'route'} onClick={() => setTab('route')}>地图取景</button><button role="tab" id="model-tab" tabIndex={tab === 'model' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'model'} onClick={() => setTab('model')}>三维模型</button></div><span className={`result-state${stale ? ' stale' : ''}`}>{stale ? '此前结果 · 请重新生成' : preview && tab === 'model' ? '最终打印网格' : options.center || options.groundWidthM !== undefined ? '手动取景' : '自动取景'}</span></div>
-        <div className="workspace-panel" id="workspace-panel" role="tabpanel" tabIndex={0} aria-labelledby={tab === 'route' ? 'route-tab' : 'model-tab'}><div className="workspace-view" hidden={tab !== 'route'}><RouteMap route={route} inspection={inspection} pending={inspectionPending} locked={controlsLocked} onCenter={moveCenter} /></div>{tab === 'model' && <TerrainView preview={preview} />}{previewPending && tab === 'model' && <div className="preview-loading" role="status">正在加载最终模型…</div>}</div>
+        <div className="workspace-panel" id="workspace-panel" role="tabpanel" tabIndex={0} aria-labelledby={tab === 'route' ? 'route-tab' : 'model-tab'}><div className="workspace-view" hidden={tab !== 'route'}><RouteMap route={route} inspection={inspection} options={options} pending={inspectionPending} locked={controlsLocked} onCenter={moveCenter} onChange={changeFraming} /></div>{tab === 'model' && <TerrainView preview={preview} />}{previewPending && tab === 'model' && <div className="preview-loading" role="status">正在加载最终模型…</div>}</div>
         <div className="model-summary">{job?.result && previewId === job.id ? <><div><span>成品外尺寸</span><strong>{job.result.dimensions.x.toFixed(2)} × {job.result.dimensions.y.toFixed(2)} × {job.result.dimensions.z.toFixed(2)} <small>mm</small></strong><span className="model-dem-source" title={sourceLabel(job.result.demSource)}>{sourceLabel(job.result.demSource)}</span></div><div><span>打印文件</span><strong>一个 STL · 一个闭合实体</strong></div><div><span>三角面</span><strong>{job.result.triangleCount.toLocaleString('zh-CN')}</strong></div></> : <><div><span>打印结构</span><strong>山体＋路线＋一体底座</strong></div><p>地图取景后生成模型，可旋转检查实际成品。</p></>}</div>
       </section>
     </main>

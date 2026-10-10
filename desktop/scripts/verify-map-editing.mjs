@@ -1,0 +1,114 @@
+import { app, BrowserWindow, ipcMain, protocol, utilityProcess } from 'electron';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+import { createDesktopManager } from '../main/manager.mjs';
+import { createSessionStore } from '../main/session.mjs';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const output=join(root,'artifacts','map-editing-check');
+mkdirSync(output,{recursive:true});
+app.setPath('userData',join(output,'profile'));
+app.disableHardwareAcceleration();
+protocol.registerSchemesAsPrivileged([{scheme:'terrain-map',privileges:{standard:true,secure:true}}]);
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+let window,manager;
+const errors=[];
+async function run() {
+  await app.whenReady();
+  protocol.handle('terrain-map',()=>new Response(null,{status:404}));
+  let savedOptions,lastInspection,lastJob;
+  manager=createDesktopManager({taskRoot:join(output,'tasks'),coreModuleUrl:pathToFileURL(join(root,'dist/src/index.js')).href,
+    workerFactory:({workerPath,taskDir})=>utilityProcess.fork(workerPath,[],{cwd:taskDir,stdio:'pipe'}),
+    onJob:job=>{lastJob=job;window?.webContents.send('terrain:job',job);} });
+  const session=createSessionStore({userDataDirectory:app.getPath('userData'),manager});
+  const handle=(name,fn)=>ipcMain.handle(`terrain:${name}`,async(_event,...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:{code:error.code||'TEST',message:error.message}};}});
+  handle('runtime',()=>({version:'0.3.4',platform:'win32',packaged:false,units:'mm'}));
+  handle('cache-info',()=>({path:output,elevationBytes:0,mapBytes:0}));
+  handle('session-get',()=>session.getSession());
+  handle('session-save',request=>{savedOptions=request.options;return session.saveSession(request);});
+  handle('session-restore',()=>session.restoreSession());
+  handle('sample',async()=>({route:await manager.addRoute(join(root,'fixtures/sample-trail.gpx'),{isSample:true}),
+    dem:await manager.addDem(join(root,'data/copernicus-longquanshan.tif'),{isSample:true})}));
+  handle('inspect',async request=>{lastInspection=await manager.inspect(request);return lastInspection;});
+  handle('start',request=>manager.start(request));handle('get',id=>manager.get(id));handle('preview',id=>manager.preview(id));
+  handle('cancel',id=>manager.cancel(id));
+  window=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{preload:join(root,'desktop/main/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  window.webContents.on('console-message',event=>{if(event.level==='error'&&!event.message.includes('terrain-map')){errors.push(event.message);console.error(event.message);}});
+  await window.loadFile(join(root,'desktop/dist/renderer/index.html'));
+  const js=source=>window.webContents.executeJavaScript(source);
+  const wait=async(predicate,label)=>{const until=Date.now()+30000;while(Date.now()<until){if(await predicate())return;await delay(50);}throw new Error(`Timed out: ${label}`);};
+  const click=label=>js(`(()=>{const el=[...document.querySelectorAll('button')].find(el=>el.textContent===${JSON.stringify(label)});if(!el||el.disabled)throw Error('Button unavailable');el.click();})()`);
+  const capture=async label=>writeFile(join(output,`${label}.png`),(await window.webContents.capturePage()).toPNG());
+  const position=selector=>js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+  const drag=async(start,end)=>{
+    window.webContents.sendInputEvent({type:'mouseMove',x:Math.round(start.x),y:Math.round(start.y)});
+    window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:Math.round(start.x),y:Math.round(start.y)});
+    for(let i=1;i<=10;i++){await delay(20);window.webContents.sendInputEvent({type:'mouseMove',button:'left',x:Math.round(start.x+(end.x-start.x)*i/10),y:Math.round(start.y+(end.y-start.y)*i/10)});}
+    window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(end.x),y:Math.round(end.y)});
+  };
+  await wait(()=>js(`!document.querySelector('.sample-button').disabled`),'startup');
+  await click('打开龙泉山示例');
+  await wait(()=>js(`document.querySelectorAll('.map-vertex-marker').length===4&&!document.querySelector('.map-actions button').disabled`),'rectangle handles');
+  await js(`document.querySelector('.map-basemap input').click();const s=document.querySelector('select');const shape=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='polygon'));shape.value='polygon';shape.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await wait(()=>js(`document.querySelectorAll('.map-vertex-marker').length===6&&!document.querySelector('.map-actions button').disabled`),'regular hexagon');
+  await capture('01-polygon');
+  const before={...lastInspection.selection},printBefore={width:savedOptions.widthMm,height:savedOptions.heightMm};
+  const c=await position('.map-center-marker'),vertex=await position('.map-vertex-marker');
+  await drag(vertex,{x:c.x+(vertex.x-c.x)*1.1,y:c.y+(vertex.y-c.y)*1.1});
+  await wait(()=>savedOptions.groundWidthM>before.groundWidthM*1.04&&lastInspection.selection.groundWidthM===savedOptions.groundWidthM&&js(`!document.querySelector('.map-actions button').disabled`),'vertex resize');
+  assert.equal(savedOptions.shape,'polygon');assert.equal(savedOptions.polygonSides,6);
+  assert.equal(savedOptions.widthMm,printBefore.width);assert.equal(savedOptions.heightMm,printBefore.height);
+  assert.equal(savedOptions.bearingDeg,0);assert.deepEqual(savedOptions.center,before.center);
+  assert.ok(Math.abs(lastInspection.selection.groundWidthM/before.groundWidthM-1.1)<.02);
+  await capture('02-resized');
+  const resized=structuredClone(savedOptions);
+  const center=await position('.map-center-marker');
+  window.webContents.sendInputEvent({type:'mouseDown',button:'right',clickCount:1,x:Math.round(center.x),y:Math.round(center.y)});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'right',clickCount:1,x:Math.round(center.x),y:Math.round(center.y)});
+  await wait(()=>js(`!!document.querySelector('[role=menu]')`),'center right-click menu');
+  await capture('03-center-menu');
+  await js(`document.querySelector('[role=menuitem]').click()`);
+  await wait(()=>js(`!!document.querySelector('.map-rotation-marker')`),'rotation handle');
+  const handlePoint=await position('.map-rotation-marker'),pivot=await position('.map-center-marker');
+  const dx=handlePoint.x-pivot.x,dy=handlePoint.y-pivot.y,a=Math.PI/6;
+  await drag(handlePoint,{x:pivot.x+Math.cos(a)*dx-Math.sin(a)*dy,y:pivot.y+Math.sin(a)*dx+Math.cos(a)*dy});
+  await wait(()=>Math.abs(savedOptions.bearingDeg)>20&&lastInspection.selection.bearingDeg===savedOptions.bearingDeg&&js(`!document.querySelector('.map-actions button').disabled`),'rotation commit');
+  assert.ok(Math.abs(savedOptions.bearingDeg-30)<1);
+  assert.equal(savedOptions.groundWidthM,resized.groundWidthM);assert.deepEqual(savedOptions.center,resized.center);
+  assert.equal(savedOptions.shape,'polygon');assert.equal(savedOptions.polygonSides,6);
+  await capture('04-rotated');
+  await js(`document.querySelector('.map-rotation-marker').focus()`);
+  for(let i=0;i<2;i++) {
+    const angleBefore=savedOptions.bearingDeg;
+    window.webContents.sendInputEvent({type:'keyDown',keyCode:'Right'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});
+    await wait(()=>savedOptions.bearingDeg>angleBefore+.5&&lastInspection.selection.bearingDeg===savedOptions.bearingDeg&&js(`!document.querySelector('.map-actions button').disabled`),'keyboard rotation');
+    assert.equal(await js(`document.activeElement.classList.contains('map-rotation-marker')`),true,'rotation handle loses keyboard focus');
+  }
+  await click('完成旋转');
+  await wait(()=>js(`document.querySelectorAll('.map-vertex-marker').length===6`),'finish rotation');
+  await js(`document.querySelector('.map-vertex-marker').focus()`);
+  for(let i=0;i<2;i++) {
+    const sizeBefore=savedOptions.groundWidthM;
+    window.webContents.sendInputEvent({type:'keyDown',keyCode:'Right'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});
+    await wait(()=>savedOptions.groundWidthM!==sizeBefore&&lastInspection.selection.groundWidthM===savedOptions.groundWidthM&&js(`!document.querySelector('.map-actions button').disabled`),'keyboard vertex resize');
+    assert.equal(await js(`document.activeElement.classList.contains('map-vertex-marker')`),true,'vertex loses keyboard focus');
+  }
+  await window.setSize(960,720);await delay(150);await capture('05-small-window');
+  await click('生成模型');
+  await wait(()=>lastJob&&!['running','cancelling'].includes(lastJob.state),'generated model');
+  assert.equal(lastJob.state,'succeeded',lastJob.error?.message);
+  await wait(()=>js(`!!document.querySelector('.terrain-canvas canvas')`),'final model preview');
+  await delay(300);await capture('06-model');
+  const preview=await manager.preview(lastJob.id);
+  assert.equal(preview.report.validation.connectedComponents,1);
+  assert.equal(preview.report.validation.boundaryEdges,0);
+  assert.equal(errors.length,0,errors.join('\n'));
+  const report={passed:true,resizedGroundWidthM:resized.groundWidthM,bearingDeg:savedOptions.bearingDeg,shape:savedOptions.shape,
+    polygonSides:savedOptions.polygonSides,printDimensions:lastJob.result.dimensions,validation:preview.report.validation,errors};
+  await writeFile(join(output,'result.json'),JSON.stringify(report,null,2));
+  console.log(JSON.stringify(report));
+  await manager.close();window.destroy();app.exit(0);
+}
+run().catch(async error=>{console.error(error);await writeFile(join(output,'failure.txt'),error.stack||String(error));if(window)await writeFile(join(output,'failure.png'),(await window.webContents.capturePage()).toPNG());await manager?.close();window?.destroy();app.exit(1);});

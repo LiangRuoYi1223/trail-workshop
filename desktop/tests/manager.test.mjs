@@ -105,6 +105,36 @@ test('inspection shares core projection and produces usable circle, rectangle an
   }
 });
 
+test('inspection exposes sharp rectangle handles independently from its rounded outline', async t => {
+  const f = await fixture(t);
+  const options = { widthMm: 120, heightMm: 80, cornerRadiusMm: 12, bearingDeg: 31, groundWidthM: 4000 };
+  const inspected = await f.manager.inspect({ routeId: f.route.id, options });
+  assert.deepEqual(inspected.controlVerticesMm, [{ x: -60, y: -40 }, { x: 60, y: -40 }, { x: 60, y: 40 }, { x: -60, y: 40 }]);
+  assert.ok(inspected.outlineMm.length > inspected.controlVerticesMm.length);
+  const { createTerrainFrame } = await import(coreModuleUrl), frame = createTerrainFrame(f.route.segments.flat(), options);
+  for (let i = 0; i < inspected.controlVerticesGeo.length; i++) {
+    const point = frame.geoToMm(inspected.controlVerticesGeo[i]), expected = inspected.controlVerticesMm[i];
+    assert.ok(Math.abs(point.x - expected.x) < 1e-7); assert.ok(Math.abs(point.y - expected.y) < 1e-7);
+  }
+  assert.equal(inspected.selection.groundWidthM, 4000); assert.equal(inspected.selection.bearingDeg, 31);
+});
+
+test('inspection exposes four circle cardinal handles and regular polygon corners', async t => {
+  const f = await fixture(t);
+  const circle = await f.manager.inspect({ routeId: f.route.id, options: { shape: 'circle', widthMm: 120 } });
+  assert.deepEqual(circle.controlVerticesMm, [{ x: 60, y: 0 }, { x: 0, y: 60 }, { x: -60, y: 0 }, { x: 0, y: -60 }]);
+  assert.equal(circle.controlVerticesGeo.length, 4);
+  const polygon = await f.manager.inspect({ routeId: f.route.id, options: { shape: 'polygon', widthMm: 120, polygonSides: 4, cornerRadiusMm: 10 } });
+  const expected = [{ x: 42.42640687119285, y: -42.42640687119285 }, { x: 42.42640687119285, y: 42.42640687119285 },
+    { x: -42.42640687119285, y: 42.42640687119285 }, { x: -42.42640687119285, y: -42.42640687119285 }];
+  assert.equal(polygon.controlVerticesMm.length, 4); assert.equal(polygon.controlVerticesGeo.length, 4);
+  for (let i = 0; i < expected.length; i++) {
+    assert.ok(Math.abs(polygon.controlVerticesMm[i].x - expected[i].x) < 1e-10);
+    assert.ok(Math.abs(polygon.controlVerticesMm[i].y - expected[i].y) < 1e-10);
+  }
+  assert.ok(polygon.outlineMm.length > polygon.controlVerticesMm.length);
+});
+
 test('automatic mode starts without local DEM and freezes the inspected geographic request', async t => {
   const f = await fixture(t);
   const options = { center: { lat: 30.565, lon: 104.29 }, groundWidthM: 4000, bearingDeg: 31 };

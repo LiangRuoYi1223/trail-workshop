@@ -149,8 +149,11 @@ test('oversized or invalid selections fail before network access',async t=>{
 test('cancellation of a pending metadata read is prompt and closes its COG',async t=>{
   const cacheDir=await sandbox(t),controller=new AbortController(),source=fixture();
   const original=source.deps.open!;
-  const operation=loadCopernicusDem(box,{cacheDir,signal:controller.signal},{open:async(...args)=>{const tiff=await original(...args);return {...tiff,getImage:()=>new Promise(()=>{})};}});
-  setTimeout(()=>controller.abort(new Error('user cancelled')),20);
+  let markMetadataPending!:()=>void;
+  const metadataPending=new Promise<void>(resolve=>{markMetadataPending=resolve;});
+  const operation=loadCopernicusDem(box,{cacheDir,signal:controller.signal},{open:async(...args)=>{const tiff=await original(...args);return {...tiff,getImage:()=>{markMetadataPending();return new Promise(()=>{});}};}});
+  await metadataPending;
+  controller.abort(new Error('user cancelled'));
   await assert.rejects(operation,/user cancelled/u);assert.equal(source.closed,1);
   assert.deepEqual(await readdir(join(cacheDir,'copernicus-glo30')),[]);
 });

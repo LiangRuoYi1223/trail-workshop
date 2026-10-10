@@ -159,9 +159,13 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
         let build = core.buildFootprintPolygonMm;
         if (!build) ({ buildFootprintPolygonMm: build } = await import(new URL('./vendor/trailprint/footprint.js', coreModuleUrl)));
         const outlineMm = build(frame.crop) ?? Array.from({ length: 128 }, (_, i) => ({ x: frame.crop.widthMm / 2 * Math.cos(i * 2 * Math.PI / 128), y: frame.crop.widthMm / 2 * Math.sin(i * 2 * Math.PI / 128) }));
+        const radius = frame.crop.radiusMm ?? frame.crop.widthMm / 2;
+        const controlVerticesMm = build({ ...frame.crop, cornerRadiusMm: 0 })
+          ?? [{ x: radius, y: 0 }, { x: 0, y: radius }, { x: -radius, y: 0 }, { x: 0, y: -radius }];
         return { selection: { center: { lat: frame.crop.centerLat, lon: frame.crop.centerLon }, groundWidthM: frame.groundWidthM,
           groundHeightM: frame.groundHeightM, bearingDeg: frame.crop.bearingDeg },
-          routeSegmentsMm: route.info.segments.map(segment => segment.map(frame.geoToMm)), outlineMm,
+          routeSegmentsMm: route.info.segments.map(segment => segment.map(frame.geoToMm)), outlineMm, controlVerticesMm,
+          controlVerticesGeo: controlVerticesMm.map(point => frame.mmToGeo(point.x, point.y)),
           outlineGeo: outlineMm.map(point => frame.mmToGeo(point.x, point.y)), bounds: { ...frame.bounds } };
       } catch (error) { const issue = publicError(error, '无法建立路线取景，请检查尺寸'); throw new DesktopError(issue.code, issue.message); }
     },

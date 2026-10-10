@@ -17,6 +17,7 @@ export interface Inspection {
   selection: { center: GeoPoint; groundWidthM: number; groundHeightM: number; bearingDeg: number };
   routeSegmentsMm: XY[][]; outlineMm: XY[];
   outlineGeo: GeoPoint[];
+  controlVerticesMm: XY[]; controlVerticesGeo: GeoPoint[];
   bounds: { west: number; south: number; east: number; north: number };
 }
 export interface Job {
