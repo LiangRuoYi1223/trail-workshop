@@ -1,0 +1,12 @@
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const binary = require('electron');
+console.log('Runtime executable:', binary);
+const environment = { ...process.env };
+delete environment.ELECTRON_RUN_AS_NODE;
+const child = spawn(binary, [fileURLToPath(new URL('./runtime-probe-main.mjs', import.meta.url))], { env: environment, stdio: 'inherit', windowsHide: true });
+child.once('spawn', () => console.log('Runtime started:', child.pid));
+child.once('error', error => { console.error(error); process.exitCode = 1; });
+child.once('exit', (code, signal) => { console.log('Runtime exit:', code, signal); process.exitCode = code === 0 ? 0 : 1; });

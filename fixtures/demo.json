@@ -1,0 +1,11 @@
+{
+  "gpx": "sample-trail.gpx",
+  "output": "../outputs/stage1/Longquanshan_Terrain.stl",
+  "dem": { "file": "../data/copernicus-longquanshan.tif" },
+  "terrain": {
+    "shape": "rectangle", "widthMm": 120, "heightMm": 80,
+    "baseThicknessMm": 2, "zExaggeration": 2,
+    "gridColumns": 129, "smoothing": "raw", "bearingDeg": 0,
+    "paddingFraction": 0.1
+  }
+}
