@@ -82,7 +82,7 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
     applicationRoot: app.getAppPath(), platform: process.platform };
   try {
     if (!runtime.packaged) throw new Error('Runtime verification must use the packaged executable.');
-    if (!['auto', 'local'].includes(imageMode)) throw new Error('Runtime imagery mode must be auto or local.');
+    if (!['auto', 'local', 'none'].includes(imageMode)) throw new Error('Runtime imagery mode must be auto, local or none.');
     if (!routePath || !demPath) throw new Error('请通过 --runtime-check-local-route 和 --runtime-check-dem 指定验证用 GPX 或 KML 与 GeoTIFF；软件不再附带示例。');
     const route = await manager.addRoute(resolve(routePath));
     const dem = await manager.addDem(resolve(demPath));

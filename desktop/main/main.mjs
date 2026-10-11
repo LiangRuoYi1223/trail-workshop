@@ -64,7 +64,7 @@ manager = createDesktopManager({ taskRoot, coreModuleUrl, demCacheDir, imageCach
 const sessions = createSessionStore({ userDataDirectory, manager });
 if (runtimeCheckDirectory) {
   try {
-    const { checkRuntime } = await import('./runtime-check.mjs');
+    const { checkRuntime } = await import(process.argv.includes('--runtime-check-snow') ? './runtime-check-snow.mjs' : './runtime-check.mjs');
     const report = await checkRuntime({ app, manager, routePath: runtimeCheckLocalRoute, demPath: runtimeCheckDem, imagePath: runtimeCheckImage,
       destination: runtimeCheckDirectory, onlineRoutePath: runtimeCheckRoute, imageMode: runtimeCheckImageMode });
     console.log(JSON.stringify({ passed: report.passed, runtime: report.runtime, result: report.job.result, saved: report.saved }));
@@ -191,7 +191,7 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: '剪切', role: 'cut' }, { label: '复制', role: 'copy' }, { label: '粘贴', role: 'paste' }, { label: '全选', role: 'selectAll' }] },
   { label: '帮助', submenu: [{ label: '第三方许可', click: () => shell.openPath(join(applicationRoot, app.isPackaged ? 'licenses' : 'desktop/licenses')) },
     { label: '关于徒步地形工坊', click: () => dialog.showMessageBox(window, { type: 'info', title: '徒步地形工坊',
-    message: `徒步地形工坊 ${VERSION}`, detail: '导入 GPX 或 KML 与高程，使用彩色地表影像区分草地、山石，路线使用独立颜色。支持最多三色的 3MF、OBJ 材质包及 STL。\n实际打印需在目标切片软件中确认耗材映射，可恢复上次项目。' }) }] },
+    message: `徒步地形工坊 ${VERSION}`, detail: '导入 GPX 或 KML 与高程，使用彩色地表影像区分草地、山石，可选地形适配积雪，路线使用独立颜色。支持最多四色的 3MF、OBJ 材质包及 STL；彩色文件保留有厚度的白色雪层。\n实际打印需在目标切片软件中确认耗材映射，可恢复上次项目。' }) }] },
 ]));
 
 window = new BrowserWindow({ title: '徒步地形工坊', ...requestedSize, minWidth: 960, minHeight: 720,

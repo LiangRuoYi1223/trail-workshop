@@ -6,7 +6,8 @@ export interface ModelOptions {
   cornerRadiusMm: number; bearingDeg: number; paddingFraction: number; baseThicknessMm: number;
   zExaggeration: number; gridColumns: number; smoothing: 'raw' | 'light' | 'medium' | 'heavy';
   routeWidthMm: number; routeHeightMm: number; routeColor: string; frameWidthMm: number;
-  maxColors:2|3; grassColor:string; rockColor:string;
+  maxColors:2|3|4; grassColor:string; rockColor:string;
+  snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
   center?: GeoPoint; groundWidthM?: number;
 }
 export interface RouteInfo {
@@ -22,10 +23,11 @@ export interface SurfaceImageSource {
   cacheHit: boolean; retrievedAt: string; attribution?: string;
   bounds: { west: number; south: number; east: number; north: number };
 }
-export interface AppearanceOptions { maxColors:2|3; grassColor:string; rockColor:string; routeColor:string }
+export interface AppearanceOptions { maxColors:2|3|4; grassColor:string; rockColor:string; routeColor:string }
+export type FaceClass = 'grass'|'rock'|'snow'|'route';
 export interface ModelAppearance {
-  schemaVersion:1; faceClasses:Array<'grass'|'rock'|'route'>; faceMaterials:number[];
-  palette:Array<{id:'grass'|'rock'|'route';name:string;color:string}>; options:AppearanceOptions;
+  schemaVersion:1; faceClasses:FaceClass[]; faceMaterials:number[];
+  palette:Array<{id:FaceClass;name:string;color:string}>; options:AppearanceOptions;
   classification:'rgb-greenness'|'uniform'; hash:string; source?:Record<string,unknown>;
 }
 export interface Inspection {
@@ -49,9 +51,17 @@ export interface Job {
   result?: { dimensions: { x: number; y: number; z: number }; triangleCount: number; downloadName: string; stlSha256: string; demSource?: { provider: string; dataset?: string; cacheHit?: boolean; tileCount?: number }; imageSource?: SurfaceImageSource };
   error?: { code: string; message: string };
 }
+export interface MaterialPart {
+  id: 'terrain'|'snow'|'route'; positions: number[]; indices: number[];
+  faceKinds?: string[]; faceClasses?: FaceClass[];
+}
+export interface SnowReport {
+  enabled: boolean; requestedCoveragePercent: number; actualCoveragePercent: number;
+  maxThicknessMm?: number;
+}
 export interface Preview {
-  mesh: { positions: number[]; indices: number[]; faceKinds?: string[] };
-  report: Record<string, unknown> & { imageSource?: SurfaceImageSource };
+  mesh: { positions: number[]; indices: number[]; faceKinds?: string[]; faceClasses?: FaceClass[]; materialParts?: MaterialPart[] };
+  report: Record<string, unknown> & { imageSource?: SurfaceImageSource; snow?: SnowReport };
   appearance?:ModelAppearance;
 }
 export interface RuntimeInfo { version: string; electron: string; node: string; platform: string; packaged: boolean; units: 'mm' }

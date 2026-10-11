@@ -317,7 +317,22 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
             job.public.message = typeof message.message === 'string' ? message.message.slice(0, 200) : '正在生成模型'; emit(job);
           } else if (message.type === 'complete' && !job.completion) {
             enterPhase(job, 'verify');
-            job.completion = verifyOutput(job.taskDir, core.validateModelAppearance);
+            job.completion = verifyOutput(job.taskDir, core.validateModelAppearance).then(verified => {
+              const { mesh, report } = verified.preview;
+              if (mesh.materialParts !== undefined) {
+                const digest = sha256(Buffer.from(JSON.stringify(mesh.materialParts)));
+                if (digest !== report.materialPartsSha256) throw new DesktopError('OUTPUT_MISMATCH', '材料实体与生成记录不一致，请重新生成');
+                try { core.validateMaterialParts(mesh); }
+                catch { throw new DesktopError('OUTPUT_INVALID', '积雪材料实体校验未通过，请重新生成'); }
+                for (const part of mesh.materialParts) {
+                  if (!Array.isArray(part.faceClasses) || part.faceClasses.length !== part.indices.length / 3)
+                    throw new DesktopError('OUTPUT_INVALID', '材料实体外观分类缺失，请重新生成');
+                }
+              } else if (job.public.options.snowEnabled && job.public.options.snowCoveragePercent > 0) {
+                throw new DesktopError('OUTPUT_INVALID', '积雪模型缺少实际材料体积，请重新生成');
+              }
+              return verified;
+            });
             // Avoid an unhandled rejection while waiting for the process to exit.
             job.completion.catch(() => {});
             job.public.message = '正在核对 STL 与最终预览'; emit(job);
@@ -386,6 +401,8 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       if (job.public.state !== 'succeeded' || !job.verified) throw new DesktopError('RESULT_UNAVAILABLE', '该任务尚无可保存的模型');
       const validated = appearanceOptions(validateOptions(options));
       const core = await corePromise, { mesh, appearance } = job.verified.preview;
+      if (format !== 'stl' && mesh.materialParts?.some(part => part.id === 'snow') && validated.maxColors !== 4)
+        throw new DesktopError('CONFIG_INVALID', '积雪模型须使用四色材料导出');
       let current;
       if (appearance) {
         core.validateModelAppearance(appearance, mesh.indices.length / 3);

@@ -81,9 +81,34 @@ test('recolor keeps semantic classification and source but changes current color
 
 test('options validate budget and concrete six-digit RGB while supporting old partial settings', () => {
   assert.deepEqual(validateAppearanceOptions({routeColor:'#ABC123'}), {...options,routeColor:'#abc123'});
-  for (const invalid of [{maxColors:4},{maxColors:0},{grassColor:'red'},{rockColor:'#abc'},{routeColor:'#GG1122'},null]) {
+  for (const invalid of [{maxColors:5},{maxColors:0},{grassColor:'red'},{rockColor:'#abc'},{routeColor:'#GG1122'},null]) {
     assert.throws(() => validateAppearanceOptions(invalid as never), /颜色|配色/u);
   }
+});
+
+test('four-color snow surfaces and walls stay white without sampling imagery', () => {
+  const appearance = buildModelAppearance(mesh(['snow','snow-wall','route','terrain','wall'] as never), selection,
+    {...options,maxColors:4} as never, image(() => ({r:50,g:140,b:60})));
+  assert.deepEqual(appearance.faceClasses, ['snow','snow','route','grass','rock']);
+  assert.deepEqual(appearance.faceMaterials.map(index => appearance.palette[index].color),
+    ['#ffffff','#ffffff','#c84832','#799278','#a9aa92']);
+  validateModelAppearance(appearance,5);
+  const recolored = recolorModelAppearance(appearance,{grassColor:'#112233',rockColor:'#334455',routeColor:'#667788'});
+  assert.deepEqual(recolored.faceMaterials.map(index => recolored.palette[index].color),
+    ['#ffffff','#ffffff','#667788','#112233','#334455']);
+  assert.notEqual(recolored.hash,appearance.hash);
+  assert.throws(() => recolorModelAppearance(appearance,{maxColors:3}), /四色|4|积雪/u);
+});
+
+test('four-color mode deduplicates white route and white snow while preserving their semantic classes', () => {
+  const appearance = buildModelAppearance(mesh(['snow','route','terrain','wall'] as never),selection,
+    {...options,maxColors:4,routeColor:'#FFFFFF'} as never);
+  assert.deepEqual(appearance.faceClasses,['snow','route','grass','rock']);
+  assert.deepEqual(appearance.faceMaterials,[0,0,1,2]);
+  assert.deepEqual(appearance.palette.map(entry => entry.color),['#ffffff','#799278','#a9aa92']);
+  validateModelAppearance(appearance,4);
+  for (const maxColors of [2,3] as const)
+    assert.throws(() => buildModelAppearance(mesh(['snow'] as never),selection,{...options,maxColors}), /四色|4|积雪/u);
 });
 
 test('appearance validator refuses stale hashes, malformed counts, illegal material indices and counterfeit palette', () => {

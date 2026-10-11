@@ -257,6 +257,12 @@ button.primary-button:active:not(:disabled) { background: #1e4434; }
 .terrain-color-fields label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text); }
 .terrain-color-fields input[type="color"] { width: 36px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: white; cursor: pointer; }
 .terrain-color-fields input:disabled { opacity: .4; cursor: default; }
+.snow-color-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; font-size: 12px; color: var(--ink); }
+.snow-color-field > span:last-child { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.snow-color-swatch { width: 18px; height: 18px; background: #fff; border: 1px solid var(--line); border-radius: 3px; }
+.snow-section .checkbox-field { margin-top: 0; }
+.snow-dot { border: 1px solid #788675; }
+.model-summary .model-snow-source, .model-summary .model-material-contract { margin-top: 5px; max-width: 480px; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .image-detail button { margin-top: 6px; }
 .image-mode { margin-top: 0; }
 .image-file-row { margin-top: 15px; }

@@ -1,6 +1,6 @@
-export type FaceClass = 'grass' | 'rock' | 'route';
+export type FaceClass = 'grass' | 'rock' | 'snow' | 'route';
 export interface AppearanceOptions {
-  maxColors: 2 | 3;
+  maxColors: 2 | 3 | 4;
   grassColor: string;
   rockColor: string;
   routeColor: string;
@@ -24,7 +24,7 @@ export interface ColorImage {
 export interface AppearanceMesh {
   positions: ArrayLike<number>;
   indices: ArrayLike<number>;
-  faceKinds?: ReadonlyArray<'terrain' | 'route' | 'route-wall' | 'frame' | 'wall' | 'bottom'>;
+  faceKinds?: ReadonlyArray<'terrain' | 'route' | 'route-wall' | 'snow' | 'snow-wall' | 'frame' | 'wall' | 'bottom'>;
 }
 export interface AppearanceSelection {
   center: { lat: number; lon: number };

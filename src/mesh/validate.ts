@@ -6,6 +6,10 @@ export interface PrintableMesh {
   positions: number[];
   indices: number[];
 }
+export interface PrintableMeshOptions {
+  /** Material volumes can contain separate closed islands; the external printing shell cannot. */
+  allowDisconnected?: boolean;
+}
 
 export interface Vector3 {
   x: number;
@@ -89,7 +93,7 @@ function boundsFor(positions: number[], representation: string): PrintableMeshRe
 }
 
 /** Edge adjacency counts surface components; merely touching at a vertex is insufficient. */
-function validateRepresentation(mesh: PrintableMesh, representation: string): PrintableMeshReport {
+function validateRepresentation(mesh: PrintableMesh, representation: string, options:PrintableMeshOptions): PrintableMeshReport {
   const { positions, indices } = mesh;
   if (!positions.length || positions.length % 3 !== 0) {
     fail(representation, "positions must contain complete xyz vertices");
@@ -139,6 +143,7 @@ function validateRepresentation(mesh: PrintableMesh, representation: string): Pr
   const origin = bounds.min;
   let signedSixVolume = 0;
   let compensation = 0;
+  const faceVolumes=options.allowDisconnected?new Float64Array(triangleCount):undefined;
 
   for (let face = 0; face < triangleCount; face++) {
     const offset = face * 3;
@@ -174,6 +179,7 @@ function validateRepresentation(mesh: PrintableMesh, representation: string): Pr
     const sixVolume = ax * (by * cz - bz * cy)
       + ay * (bz * cx - bx * cz)
       + az * (bx * cy - by * cx);
+    if(faceVolumes)faceVolumes[face]=sixVolume;
     const corrected = sixVolume - compensation;
     const next = signedSixVolume + corrected;
     compensation = (next - signedSixVolume) - corrected;
@@ -208,7 +214,12 @@ function validateRepresentation(mesh: PrintableMesh, representation: string): Pr
   if (boundaryEdges) fail(representation, `${boundaryEdges} boundary edges; mesh is not closed`);
 
   const connectedComponents = connected.componentCount();
-  if (connectedComponents !== 1) fail(representation, `${connectedComponents} connected components; expected one solid surface`);
+  if (!options.allowDisconnected&&connectedComponents !== 1) fail(representation, `${connectedComponents} connected components; expected one solid surface`);
+  if(faceVolumes) {
+    const componentVolumes=new Map<number,number>();
+    for(let face=0;face<triangleCount;face++){const root=connected.find(face);componentVolumes.set(root,(componentVolumes.get(root)??0)+faceVolumes[face]);}
+    for(const [component,volume] of componentVolumes)if(!Number.isFinite(volume)||volume<=0)fail(representation,`component ${component} volume must be positive, got ${volume/6} mm3`);
+  }
   const volumeMm3 = signedSixVolume / 6;
   if (!Number.isFinite(volumeMm3) || volumeMm3 <= 0) {
     fail(representation, `volume must be positive, got ${volumeMm3} mm3`);
@@ -220,9 +231,9 @@ function validateRepresentation(mesh: PrintableMesh, representation: string): Pr
  * Check both the input and coordinates as actually stored by binary STL (Float32).
  * Does not perform global triangle/triangle intersection or printer process checks.
  */
-export function assertPrintableMesh(mesh: PrintableMesh): PrintableMeshReport {
-  const report = validateRepresentation(mesh, "Mesh");
+export function assertPrintableMesh(mesh: PrintableMesh,options:PrintableMeshOptions={}): PrintableMeshReport {
+  const report = validateRepresentation(mesh, "Mesh",options);
   const stlPositions = mesh.positions.map(Math.fround);
-  validateRepresentation({ positions: stlPositions, indices: mesh.indices }, "STL Float32");
+  validateRepresentation({ positions: stlPositions, indices: mesh.indices }, "STL Float32",options);
   return report;
 }

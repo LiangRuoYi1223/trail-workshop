@@ -31,8 +31,9 @@ export function geometryOptions<T extends { routeColor?: string; grassColor?:str
   const { routeColor, grassColor, rockColor, maxColors, ...geometry } = options;
   return geometry;
 }
-export interface PrintColors { maxColors:2|3; grassColor:string; rockColor:string; routeColor:string }
+export interface PrintColors { maxColors:2|3|4; grassColor:string; rockColor:string; routeColor:string }
 export function appearanceColor(faceClass:string, options:PrintColors):string {
+  if (faceClass==='snow') return '#ffffff';
   return faceClass==='route' ? options.routeColor : faceClass==='grass' || options.maxColors===2 ? options.grassColor : options.rockColor;
 }
 export function printPaletteCount(classes:readonly string[],options:PrintColors):number {

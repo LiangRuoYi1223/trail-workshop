@@ -19,13 +19,15 @@ export function publicError(error, fallback = '操作失败，请重试') {
 export function validateOptions(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DesktopError('CONFIG_INVALID', '模型参数格式无效');
   const allowed = new Set(['shape', 'widthMm', 'heightMm', 'polygonSides', 'cornerRadiusMm', 'bearingDeg', 'paddingFraction',
-    'center', 'groundWidthM', 'baseThicknessMm', 'zExaggeration', 'gridColumns', 'smoothing', 'maxMissingFraction', 'routeWidthMm', 'routeHeightMm', 'routeColor', 'frameWidthMm', 'maxColors', 'grassColor', 'rockColor']);
+    'center', 'groundWidthM', 'baseThicknessMm', 'zExaggeration', 'gridColumns', 'smoothing', 'maxMissingFraction', 'routeWidthMm', 'routeHeightMm', 'routeColor', 'frameWidthMm', 'maxColors', 'grassColor', 'rockColor',
+    'snowEnabled', 'snowCoveragePercent', 'snowMaxThicknessMm']);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new DesktopError('CONFIG_INVALID', '存在不支持的模型参数');
   const output = {
     shape: 'rectangle', widthMm: 120, heightMm: 80, polygonSides: 6, cornerRadiusMm: 0,
     bearingDeg: 0, paddingFraction: 0.1, baseThicknessMm: 2, zExaggeration: 2,
     gridColumns: 129, smoothing: 'raw', maxMissingFraction: 0.01, routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
     maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92',
+    snowEnabled: false, snowCoveragePercent: 30, snowMaxThicknessMm: 1,
     ...input,
   };
   const range = (key, min, max, label, integral = false) => {
@@ -40,7 +42,10 @@ export function validateOptions(input = {}) {
   range('zExaggeration', 0.01, 20, '垂直夸张'); range('gridColumns', 17, 257, '精度点数', true);
   range('maxMissingFraction', 0, 0.05, '允许高程缺值比例'); range('routeWidthMm', 0.4, 5, '路线宽度');
   range('routeHeightMm', 0.1, 10, '路线厚度');
-  if (![2, 3].includes(output.maxColors)) throw new DesktopError('CONFIG_INVALID', '打印颜色上限须为 2 或 3');
+  if (![2, 3, 4].includes(output.maxColors)) throw new DesktopError('CONFIG_INVALID', '打印颜色上限须为 2、3 或 4');
+  if (typeof output.snowEnabled !== 'boolean') throw new DesktopError('CONFIG_INVALID', '积雪开关须为有效的开启或关闭状态');
+  range('snowCoveragePercent', 0, 100, '积雪覆盖率'); range('snowMaxThicknessMm', 0.1, 10, '积雪最大厚度');
+  if (output.snowEnabled && output.maxColors !== 4) throw new DesktopError('CONFIG_INVALID', '启用积雪时请选择四色打印');
   for (const [key, label] of [['routeColor', '路线'], ['grassColor', '草地'], ['rockColor', '山石']]) {
     if (typeof output[key] !== 'string' || !/^#[a-f0-9]{6}$/i.test(output[key])) throw new DesktopError('CONFIG_INVALID', `${label}颜色须为有效的 RGB 颜色`);
     output[key] = output[key].toLowerCase();

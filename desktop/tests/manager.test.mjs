@@ -323,7 +323,7 @@ test('route appearance defaults preserve the existing relief and stay outside wo
 
 test('invalid color budgets and mountain colors cannot launch generation', async t => {
   const f = await fixture(t);
-  for (const options of [{ maxColors: 1 }, { maxColors: 4 }, { maxColors: '3' }, { grassColor: 'green' }, { rockColor: '#fff' }, { grassColor: null }]) {
+  for (const options of [{ maxColors: 1 }, { maxColors: 5 }, { maxColors: '3' }, { grassColor: 'green' }, { rockColor: '#fff' }, { grassColor: null }]) {
     await assert.rejects(f.start(options), { code: 'CONFIG_INVALID' });
   }
   assert.equal(f.children.length, 0);

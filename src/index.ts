@@ -22,5 +22,7 @@ export { buildModelAppearance, recolorModelAppearance } from './appearance/apply
 export { validateAppearanceOptions, validateModelAppearance } from './appearance/palette.js';
 export { writeColor3mf } from './export/color-3mf.js';
 export { writeObjBundle } from './export/color-obj.js';
+export { validateMaterialParts } from './export/material-parts.js';
+export type { MaterialPart } from './vendor/trailprint/types.js';
 export type { AppearanceOptions, ModelAppearance, ColorImage } from './appearance/types.js';
 export type { TerrainOptions, PrintableTerrainOptions, DemSampler, GenerationResult, GenerationProgress } from './types.js';

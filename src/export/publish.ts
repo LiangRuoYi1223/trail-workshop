@@ -6,6 +6,7 @@ import type { GenerationResult } from '../types.js';
 import { writeBinaryStl } from '../vendor/trailprint/stl-writer.js';
 import type { ModelAppearance } from '../appearance/types.js';
 import { validateModelAppearance } from '../appearance/palette.js';
+import { validateMaterialParts } from './material-parts.js';
 
 type PublishResult = GenerationResult & { appearance?: ModelAppearance };
 
@@ -49,6 +50,10 @@ async function publishLocked(target:string, result:PublishResult, warnings:strin
   const backed: number[] = [], published: number[] = [];
   let preserveStage = false;
   try {
+    if (result.mesh.materialParts) {
+      validateMaterialParts(result.mesh);
+      result.report.materialPartsSha256 = createHash('sha256').update(JSON.stringify(result.mesh.materialParts)).digest('hex');
+    }
     if (result.appearance) {
       validateModelAppearance(result.appearance, result.mesh.indices.length / 3);
       result.report.appearanceHash = result.appearance.hash;

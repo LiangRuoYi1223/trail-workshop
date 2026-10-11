@@ -12,7 +12,10 @@ export interface DemSampler {
   sample(lat: number, lon: number): number | null;
   metadata: object;
 }
-export interface PrintableTerrainOptions extends TerrainOptions {routeWidthMm?:number;routeHeightMm?:number;frameWidthMm?:number}
+export interface PrintableTerrainOptions extends TerrainOptions {
+  routeWidthMm?: number; routeHeightMm?: number; frameWidthMm?: number;
+  snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
+}
 export interface GenerationProgress { phase: 'gpx'|'frame'|'dem'|'process'|'mesh'|'route'|'done'; progress: number; message: string }
 export interface GenerationResult {
   mesh: TerrainMeshPayload;

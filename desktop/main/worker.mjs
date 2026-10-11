@@ -134,8 +134,15 @@ port.on('message', async event => {
     });
     if (result.mesh.indices.length / 3 > 500000) throw Object.assign(new Error('模型超过 50 万三角面，请降低精度'), { code: 'MESH_TOO_COMPLEX' });
     const selection = result.report.selection;
-    result.appearance = core.buildModelAppearance(result.mesh, { center: selection.center, bearingDeg: selection.bearingDeg,
-      mmPerMeter: selection.mmPerMeter }, message.appearanceOptions, image);
+    const appearanceSelection = { center: selection.center, bearingDeg: selection.bearingDeg, mmPerMeter: selection.mmPerMeter };
+    result.appearance = core.buildModelAppearance(result.mesh, appearanceSelection, message.appearanceOptions, image);
+    if (result.mesh.materialParts) {
+      for (const part of result.mesh.materialParts) {
+        controller.signal.throwIfAborted();
+        part.faceClasses = core.buildModelAppearance(part, appearanceSelection, message.appearanceOptions, image).faceClasses;
+      }
+      core.validateMaterialParts(result.mesh);
+    }
     core.validateModelAppearance(result.appearance, result.mesh.indices.length / 3);
     if (imageSource) result.report.imageSource = imageSource;
     controller.signal.throwIfAborted();

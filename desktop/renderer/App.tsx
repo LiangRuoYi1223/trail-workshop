@@ -11,6 +11,7 @@ const DEFAULTS: ModelOptions = {
   bearingDeg: 0, paddingFraction: .1, baseThicknessMm: 2, zExaggeration: 2,
   gridColumns: 129, smoothing: 'raw', routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
   maxColors:3,grassColor:'#799278',rockColor:'#a9aa92',
+  snowEnabled:false,snowCoveragePercent:30,snowMaxThicknessMm:1,
 };
 const api = window.terrain;
 function unwrap<T>(result: Result<T>): T { if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code }); return result.value; }
@@ -41,7 +42,13 @@ function validate(options: ModelOptions): string {
   if (!Number.isInteger(options.polygonSides)) return '多边形边数需为整数。';
   if (!/^#[\da-f]{6}$/i.test(options.routeColor)) return '请选择有效的路线颜色。';
   if (!/^#[\da-f]{6}$/i.test(options.grassColor) || !/^#[\da-f]{6}$/i.test(options.rockColor)) return '请选择有效的山体颜色。';
-  if (![2,3].includes(options.maxColors)) return '打印颜色上限请选择两色或三色。';
+  if (![2,3,4].includes(options.maxColors)) return '打印颜色上限请选择两色、三色或四色。';
+  if (options.snowEnabled !== undefined && typeof options.snowEnabled !== 'boolean') return '请选择有效的积雪开关状态。';
+  const snowCoverage = options.snowCoveragePercent === undefined ? 30 : options.snowCoveragePercent;
+  const snowThickness = options.snowMaxThicknessMm === undefined ? 1 : options.snowMaxThicknessMm;
+  if (!Number.isFinite(snowCoverage) || snowCoverage < 0 || snowCoverage > 100) return '积雪覆盖率需在 0–100% 之间。';
+  if (!Number.isFinite(snowThickness) || snowThickness < .1 || snowThickness > 10) return '积雪最大厚度需在 0.1–10 mm 之间。';
+  if (options.snowEnabled && options.maxColors !== 4) return '启用积雪时请选择四色打印。';
   if (options.groundWidthM !== undefined && (!Number.isFinite(options.groundWidthM) || options.groundWidthM < 1 || options.groundWidthM > 100000)) return '地面取景宽度需在 0.001–100 km 之间。';
   if (options.center && (!Number.isFinite(options.center.lat) || !Number.isFinite(options.center.lon) || Math.abs(options.center.lat) > 80 || Math.abs(options.center.lon) > 180)) return '取景纬度需在 −80–80°、经度需在 −180–180° 之间。';
   const radius = options.shape === 'circle' ? 0 : options.shape === 'polygon' ? options.widthMm / 2 * Math.cos(Math.PI / options.polygonSides) : Math.min(options.widthMm, options.heightMm) / 2;
@@ -213,6 +220,8 @@ export default function App() {
     setOptions(previous => {
       const next = { ...previous, [key]: value };
       if (key === 'shape' && value === 'circle') next.cornerRadiusMm = 0;
+      if (key === 'snowEnabled' && value === true) next.maxColors = 4;
+      if (key === 'maxColors' && previous.snowEnabled && value !== 4) return previous;
       return next;
     });
     setError(''); setSavedPath('');
@@ -284,9 +293,11 @@ export default function App() {
   }
   const radiusMax = options.shape === 'circle' ? 0 : options.shape === 'polygon' ? options.widthMm / 2 * Math.cos(Math.PI / options.polygonSides) : Math.min(options.widthMm, options.heightMm) / 2;
   const status = !sessionReady ? '正在读取上次设置' : busy || (running ? phaseLabel(job!.phase) : previewPending ? '正在加载最终模型' : job?.state === 'cancelled' ? '生成已取消，可以重新开始' : failure ? failure.status : stale ? '参数已修改，请重新生成模型' : job?.state === 'succeeded' ? '模型已生成，可保存打印文件' : '导入路线，调整取景后开始制作');
-  const colorCount=preview?.appearance ? printPaletteCount(preview.appearance.faceClasses,options) : options.maxColors;
+  const materialClasses = preview?.mesh.materialParts?.flatMap(part=>part.faceClasses ?? []);
+  const colorCount=preview?.appearance ? printPaletteCount(materialClasses?.length ? [...preview.appearance.faceClasses,...materialClasses] : preview.appearance.faceClasses,options) : options.maxColors;
   const saveLabel=exportFormat==='3mf'?'保存彩色 3MF':exportFormat==='obj'?'保存 OBJ 包':'保存 STL';
   const center = options.center || inspection?.selection.center;
+  const snowReport = preview?.report.snow;
 
   return <div className={`app-shell${dragging ? ' is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = !controlsLocked && event.dataTransfer.types.includes('Files') ? 'copy' : 'none'; }} onDragEnter={event => { event.preventDefault(); if (!controlsLocked && event.dataTransfer.types.includes('Files')) { dragDepth.current++; setDragging(true); } }} onDragLeave={event => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current || event.relatedTarget === null && (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight)) { dragDepth.current = 0; setDragging(false); } }} onDrop={event => { event.preventDefault(); dragDepth.current = 0; setDragging(false); if (!controlsLocked && event.dataTransfer.types.includes('Files')) void importDropped(Array.from(event.dataTransfer.files)); }}>
     <header className="app-header"><div className="app-brand"><MountainMark /><div><h1>徒步地形工坊</h1><p>把走过的路，制作成一座地形</p></div></div><div className="header-meta">独立桌面版{runtime ? ` · ${runtime.version}` : ''}<span>输出单位：毫米</span></div></header>
@@ -305,9 +316,11 @@ export default function App() {
           {imageMode === 'none' ? <p className="field-hint">不使用地表影像，山体表面统一配色；高程和路线照常生成。</p> : imageMode === 'auto' ? <div className="automatic-image-info"><p className="field-hint">生成模型时按取景范围获取过去 {imageLookbackMonths} 个月内拍摄的 Sentinel-2 真彩色影像，优先复用符合日期范围的已验证缓存；首次获取需要联网。</p><p className="field-hint">卫星影像并非实时，会筛除云、云影和无效像元。所选月份内没有可用影像、云层遮挡或覆盖不足时会明确提示，可重试或切换本地导入。</p></div> : <><div className="file-row image-file-row"><label>彩色地表 GeoTIFF</label><button onClick={chooseImage} disabled={controlsLocked||!api}>{image?'更换地表影像':'选择地表影像'}</button></div>
           {image?<div className="file-detail image-detail"><strong title={image.fileName}>{image.fileName}</strong><p>{image.width} × {image.height} 像素 · {image.crs}</p><button onClick={clearImage} disabled={controlsLocked}>清除地表影像</button></div>:<p className="field-hint">导入或拖入此区域 · RGB 地表影像 · 最大 64 MB。未导入时山体统一配色。</p>}</>}
           {imageMode !== 'none' && <p className="field-hint">依据影像颜色将绿色区域与非植被区域归并为草地、山石代表色；这是颜色归类，无法准确识别地物。地图底图仅供取景。</p>}
-          <label className="select-field" htmlFor="print-colors">打印颜色上限<select id="print-colors" value={options.maxColors} disabled={controlsLocked} onChange={event=>update('maxColors',Number(event.currentTarget.value) as 2|3)}><option value="3">三色 · 草地、山石、路线</option><option value="2">两色 · 山体、路线</option></select></label>
+          <label className="select-field" htmlFor="print-colors">打印颜色上限<select id="print-colors" value={options.maxColors} disabled={controlsLocked} onChange={event=>update('maxColors',Number(event.currentTarget.value) as 2|3|4)}><option value="4">四色 · 草地、山石、白雪、路线</option><option value="3" disabled={options.snowEnabled}>三色 · 草地、山石、路线</option><option value="2" disabled={options.snowEnabled}>两色 · 山体、路线</option></select></label>
           <div className="terrain-color-fields"><label htmlFor="grass-color">{options.maxColors===2?'山体颜色':'草地颜色'}<input id="grass-color" type="color" value={options.grassColor} disabled={controlsLocked} onChange={event=>update('grassColor',event.currentTarget.value)} /></label><label htmlFor="rock-color">山石颜色<input id="rock-color" type="color" value={options.rockColor} disabled={controlsLocked||options.maxColors===2} onChange={event=>update('rockColor',event.currentTarget.value)} /></label></div>
+          {options.maxColors===4 && <div className="snow-color-field"><span>白雪颜色</span><span><i className="snow-color-swatch" aria-hidden="true" />固定白色 · #ffffff</span></div>}
           <p className="field-hint">底座、边框与侧墙沿用山石色；两色时沿用山体色。</p>
+          {options.snowEnabled && <p className="field-hint">积雪使用四色模式；关闭积雪后可选择两色或三色。</p>}
         </section>
         <section className="control-section framing-section"><h2>地形取景</h2><p className="framing-instruction">拖动地图顶点等比例调整范围，拖动十字移动取景。右键中心点，选择“旋转取景”。</p>
           {inspection && <p className="framing-measure">地面范围 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km · {options.bearingDeg.toFixed(1)}°</p>}
@@ -320,9 +333,15 @@ export default function App() {
           <p className="field-hint">外沿会增加成品外尺寸，最终尺寸见模型结果。</p>
           <div className="field-pair"><NumberField label="垂直夸张" value={options.zExaggeration} onChange={value => update('zExaggeration', value)} min={.1} max={20} step={.1} unit="倍" disabled={controlsLocked} /></div>
         </section>
+        <section className="control-section snow-section"><h2>地形积雪</h2>
+          <label className="checkbox-field" htmlFor="snow-enabled"><input id="snow-enabled" type="checkbox" checked={options.snowEnabled ?? false} disabled={controlsLocked} onChange={event=>update('snowEnabled',event.currentTarget.checked)} />启用积雪</label>
+          <div className="field-pair"><NumberField label="积雪覆盖率" value={options.snowCoveragePercent ?? 30} onChange={value=>update('snowCoveragePercent',value)} min={0} max={100} step={.1} unit="%" disabled={controlsLocked||!options.snowEnabled} /><NumberField label="最大积雪厚度" value={options.snowMaxThicknessMm ?? 1} onChange={value=>update('snowMaxThicknessMm',value)} min={.1} max={10} step={.1} disabled={controlsLocked||!options.snowEnabled} /></div>
+          <p className="route-contract">先积雪，再在雪面上生成路线</p>
+          <p className="field-hint">按山体顶面俯视面积从高处向低处覆盖，包含路线下方地形；不覆盖底座和边框。边界自然变薄，陡坡雪层更薄。厚度为成品 Z 方向毫米，不随垂直夸张改变。</p>
+        </section>
         <section className="control-section route-style-section"><h2>路线样式</h2>
           <div className="field-pair"><NumberField label="路线宽度" value={options.routeWidthMm} onChange={value => update('routeWidthMm', value)} min={.4} max={5} step={.1} disabled={controlsLocked} /><NumberField label="凸起厚度" value={options.routeHeightMm} onChange={value => update('routeHeightMm', value)} min={.1} max={10} step={.1} disabled={controlsLocked} /></div>
-          <p className="route-contract">厚度是路线沿地表向上凸起的高度，不随垂直夸张改变。</p>
+          <p className="route-contract">厚度是路线沿{options.snowEnabled?'当地雪面':'地表'}向上凸起的高度，不随垂直夸张改变。</p>
           <RouteColorPicker value={options.routeColor} onChange={value=>update('routeColor',value)} disabled={controlsLocked} />
         </section>
         <section className="control-section advanced-section"><details><summary>更多设置<span>底座、精度与取景</span></summary><div className="advanced-content">
@@ -340,7 +359,7 @@ export default function App() {
         setTab(next); document.getElementById(`${next}-tab`)?.focus();
       }}><button role="tab" id="route-tab" tabIndex={tab === 'route' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'route'} onClick={() => setTab('route')}>地图取景</button><button role="tab" id="model-tab" tabIndex={tab === 'model' ? 0 : -1} aria-controls="workspace-panel" aria-selected={tab === 'model'} onClick={() => setTab('model')}>三维模型</button></div><span className={`result-state${stale ? ' stale' : ''}`}>{stale ? '此前结果 · 请重新生成' : preview && tab === 'model' ? '最终打印网格' : options.center || options.groundWidthM !== undefined ? '手动取景' : '自动取景'}</span></div>
         <div className="workspace-panel" id="workspace-panel" role="tabpanel" tabIndex={0} aria-labelledby={tab === 'route' ? 'route-tab' : 'model-tab'}><div className="workspace-view" hidden={tab !== 'route'}><RouteMap route={route} inspection={inspection} options={options} pending={inspectionPending} locked={controlsLocked} onCenter={moveCenter} onChange={changeFraming} /></div>{tab === 'model' && <TerrainView preview={preview} options={options} />}{previewPending && tab === 'model' && <div className="preview-loading" role="status">正在加载最终模型…</div>}</div>
-        <div className="model-summary">{job?.result && previewId === job.id ? <><div><span>成品外尺寸</span><strong>{job.result.dimensions.x.toFixed(2)} × {job.result.dimensions.y.toFixed(2)} × {job.result.dimensions.z.toFixed(2)} <small>mm</small></strong><span className="model-dem-source" title={sourceLabel(job.result.demSource)}>{sourceLabel(job.result.demSource)}</span>{imageSource && <span className="model-image-source" title={`${imageSourceLabel(imageSource)}${imageSource.attribution ? ` · ${imageSource.attribution}` : ''}`}>{imageSourceLabel(imageSource)}</span>}</div><div><span>打印结构与配色</span><strong className="print-color-count">一个闭合实体 · {colorCount} 色</strong></div><div><span>三角面</span><strong>{job.result.triangleCount.toLocaleString('zh-CN')}</strong></div></> : <><div><span>打印结构</span><strong>山体＋路线＋一体底座</strong></div><p>地图取景后生成模型，可旋转检查实际成品。</p></>}</div>
+        <div className="model-summary">{job?.result && previewId === job.id ? <><div><span>成品外尺寸</span><strong>{job.result.dimensions.x.toFixed(2)} × {job.result.dimensions.y.toFixed(2)} × {job.result.dimensions.z.toFixed(2)} <small>mm</small></strong><span className="model-dem-source" title={sourceLabel(job.result.demSource)}>{sourceLabel(job.result.demSource)}</span>{imageSource && <span className="model-image-source" title={`${imageSourceLabel(imageSource)}${imageSource.attribution ? ` · ${imageSource.attribution}` : ''}`}>{imageSourceLabel(imageSource)}</span>}{snowReport?.enabled && <span className="model-snow-source">{stale?'此前结果 · ':''}积雪目标 {snowReport.requestedCoveragePercent.toFixed(2)}% · 网格实测 {snowReport.actualCoveragePercent.toFixed(2)}% · 误差 {(Math.round((snowReport.actualCoveragePercent-snowReport.requestedCoveragePercent)*1000)/1000).toFixed(3)} 个百分点</span>}</div><div><span>打印结构与配色</span><strong className="print-color-count">{preview?.mesh.materialParts?.length?'一体装配':'闭合外形'} · {colorCount} 色</strong>{!!preview?.mesh.materialParts?.length && <span className="model-material-contract">材料区域拼合；STL 保存统一外形。</span>}</div><div><span>三角面</span><strong>{job.result.triangleCount.toLocaleString('zh-CN')}</strong></div></> : <><div><span>打印结构</span><strong>山体{options.snowEnabled?'＋积雪':''}＋路线＋一体底座</strong></div><p>地图取景后生成模型，可旋转检查实际成品。</p></>}</div>
       </section>
     </main>
     <footer className="task-footer">

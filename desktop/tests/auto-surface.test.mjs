@@ -339,3 +339,25 @@ test('packaged runtime automatic-image check records scene dates and byte-identi
   const stored = JSON.parse(await readFile(join(f.root, 'runtime-evidence/runtime-check.json'), 'utf8'));
   assert.deepEqual(stored.automaticSurface, report.automaticSurface);
 });
+
+test('packaged runtime none-image check ignores supplied imagery and exports uniform source-free models', async t => {
+  const f = await fixture(t, { realWorker: true, cache: false });
+  const runStart = f.manager.start;
+  f.manager.start = request => runStart({ ...request, options: { ...request.options, gridColumns: 33 } });
+  const report = await checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager,
+    routePath: join(f.root, '路线.gpx'), demPath: join(project, 'data/copernicus-longquanshan.tif'),
+    imagePath: join(f.root, 'missing-ignored-image.tif'), destination: join(f.root, 'runtime-none-evidence'), imageMode: 'none' });
+  assert.equal(report.passed, true); assert.equal(report.inputs.imageMode, 'none'); assert.equal(report.inputs.imagePath, undefined);
+  assert.equal(report.color.classification, 'uniform'); assert.equal(report.color.imageSha256, undefined);
+  assert.equal(report.job.imageMode, 'none'); assert.equal(report.job.result.imageSource, undefined);
+  assert.equal(report.automaticSurface, undefined); await assert.rejects(readFile(f.marker), { code: 'ENOENT' });
+  assert.equal(report.color.formats.length, 2);
+  for (const exported of report.color.formats) {
+    const files = zipEntries(await readFile(exported.path));
+    const manifest = JSON.parse(files.get(exported.format === '3mf' ? 'Metadata/manifest.json' : 'manifest.json'));
+    assert.equal(manifest.appearance.classification, 'uniform'); assert.equal(manifest.appearance.source, undefined);
+    assert.equal(manifest.metadata.imageSource, undefined);
+  }
+  const stored = JSON.parse(await readFile(join(f.root, 'runtime-none-evidence/runtime-check.json'), 'utf8'));
+  assert.equal(stored.inputs.imageMode, 'none'); assert.equal(stored.inputs.imagePath, undefined); assert.equal(stored.color.classification, 'uniform');
+});

@@ -126,7 +126,7 @@ test('real worker classifies image once and export uses current colors without c
   const stl = await f.manager.exportModel(job.id, 'stl', colorOptions), artifact = await f.manager.artifact(job.id);
   assert.equal(digest(stl.bytes), artifact.stlSha256);
   await assert.rejects(f.manager.exportModel(job.id, '../stl', colorOptions), { code: 'CONFIG_INVALID' });
-  await assert.rejects(f.manager.exportModel(job.id, '3mf', { ...colorOptions, maxColors: 4 }), { code: 'CONFIG_INVALID' });
+  await assert.rejects(f.manager.exportModel(job.id, '3mf', { ...colorOptions, maxColors: 5 }), { code: 'CONFIG_INVALID' });
 });
 
 test('worker refuses a previously imported image whose bytes changed before generation', async t => {

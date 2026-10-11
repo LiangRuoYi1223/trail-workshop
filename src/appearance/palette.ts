@@ -4,7 +4,7 @@ import type { AppearanceOptions, ColorImageMetadata, FaceClass, ModelAppearance,
 export class AppearanceError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = 'AppearanceError'; }
 }
-const classes = new Set<FaceClass>(['grass','rock','route']);
+const classes = new Set<FaceClass>(['grass','rock','snow','route']);
 const defaults: AppearanceOptions = {maxColors:3,grassColor:'#799278',rockColor:'#a9aa92',routeColor:'#c84832'};
 const hex = /^#[0-9a-f]{6}$/i;
 const sha256 = /^[0-9a-f]{64}$/;
@@ -14,8 +14,8 @@ export function validateAppearanceOptions(options?: Partial<AppearanceOptions>):
   if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options)))
     throw new AppearanceError('APPEARANCE_OPTIONS_INVALID','配色设置必须为有效对象');
   const out = {...defaults,...options};
-  if (out.maxColors !== 2 && out.maxColors !== 3)
-    throw new AppearanceError('APPEARANCE_OPTIONS_INVALID','打印颜色上限须为 2 或 3');
+  if (out.maxColors !== 2 && out.maxColors !== 3 && out.maxColors !== 4)
+    throw new AppearanceError('APPEARANCE_OPTIONS_INVALID','打印颜色上限须为 2、3 或 4');
   for (const key of ['grassColor','rockColor','routeColor'] as const) {
     if (typeof out[key] !== 'string' || !hex.test(out[key]))
       throw new AppearanceError('APPEARANCE_OPTIONS_INVALID','代表颜色须为有效的六位 RGB 颜色');
@@ -25,7 +25,7 @@ export function validateAppearanceOptions(options?: Partial<AppearanceOptions>):
 }
 
 export function classColor(kind: FaceClass, options: AppearanceOptions): string {
-  return kind === 'route' ? options.routeColor : kind === 'grass' || options.maxColors === 2 ? options.grassColor : options.rockColor;
+  return kind === 'snow' ? '#ffffff' : kind === 'route' ? options.routeColor : kind === 'grass' || options.maxColors === 2 ? options.grassColor : options.rockColor;
 }
 
 /** This canonical order is shared by preview persistence and exporters. */
@@ -57,8 +57,10 @@ export function validateColorImageMetadata(source: ColorImageMetadata): void {
 
 export function createAppearance(faceClasses: FaceClass[], options: AppearanceOptions,
   classification: ModelAppearance['classification'], source?: ColorImageMetadata): ModelAppearance {
+  if (faceClasses.includes('snow') && options.maxColors !== 4)
+    throw new AppearanceError('APPEARANCE_OPTIONS_INVALID','积雪外观须使用四色模式');
   const palette: PaletteEntry[] = [], materialByColor = new Map<string,number>();
-  const names: Record<FaceClass,string> = {grass:'草地',rock:'山石',route:'路线'};
+  const names: Record<FaceClass,string> = {grass:'草地',rock:'山石',snow:'白雪',route:'路线'};
   const faceMaterials = faceClasses.map(kind => {
     const color = classColor(kind,options);
     let index = materialByColor.get(color);
@@ -76,6 +78,7 @@ export function validateModelAppearance(appearance: ModelAppearance, triangleCou
     || !Array.isArray(appearance.faceMaterials) || appearance.faceClasses.length !== triangleCount
     || appearance.faceMaterials.length !== triangleCount) invalid('外观面数与网格面数不匹配');
   const options = validateAppearanceOptions(appearance.options);
+  if (appearance.faceClasses.includes('snow') && options.maxColors !== 4) invalid('积雪外观须使用四色模式');
   if (!appearance.options || Object.keys(options).some(key => options[key as keyof AppearanceOptions] !== appearance.options[key as keyof AppearanceOptions]))
     invalid('外观配色设置未归一化');
   if (!Array.isArray(appearance.palette) || appearance.palette.length < 1 || appearance.palette.length > options.maxColors)

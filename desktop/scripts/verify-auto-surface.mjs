@@ -95,7 +95,7 @@ export async function publishTerrainOutput(...args) {
     try { return { ok: true, value: await operation(...args) }; }
     catch (error) { return { ok: false, error: { code: error.code ?? 'TEST', message: error.message } }; }
   });
-  handle('runtime', () => ({ version: '0.4.1', platform: 'win32', packaged: false, units: 'mm' }));
+  handle('runtime', () => ({ version: '0.4.3', platform: 'win32', packaged: false, units: 'mm' }));
   handle('cache-info', () => ({ path: output, elevationBytes: 0, mapBytes: 0, imageBytes: 1024 * 1024 }));
   handle('session-get', () => session.getSession()); handle('session-save', request => session.saveSession(request)); handle('session-restore', () => session.restoreSession());
   handle('choose-route', () => manager.addRoute(join(root, 'fixtures/sample-trail.gpx')));
