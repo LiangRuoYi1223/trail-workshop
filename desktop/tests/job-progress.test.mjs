@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 
 const ui = await import('../renderer/job-progress.ts').catch(() => ({}));
 
+test('a new file-size error replaces a prior cancelled job status', () => {
+  assert.equal(typeof ui.idleStatus, 'function', 'idle task status is missing');
+  const failure = ui.failurePresentation('INPUT_TOO_LARGE', 'auto');
+  assert.match(failure.status, /文件.*导入.*未完成/);
+  assert.equal(ui.idleStatus('cancelled', failure.status, false), failure.status);
+  assert.equal(ui.idleStatus('succeeded', failure.status, true), failure.status);
+});
+
+test('clearing a current error restores cancellation, stale and ready states', () => {
+  assert.equal(typeof ui.idleStatus, 'function', 'idle task status is missing');
+  assert.equal(ui.idleStatus('cancelled', undefined, false), '生成已取消，可以重新开始');
+  assert.equal(ui.idleStatus('succeeded', undefined, true), '参数已修改，请重新生成模型');
+  assert.equal(ui.idleStatus('succeeded', undefined, false), '模型已生成，可保存打印文件');
+});
+
 for (const code of ['MODEL_TIMEOUT', 'OUTPUT_TIMEOUT', 'JOB_TIMEOUT']) {
   test(`${code} never offers satellite recovery in automatic image mode`, () => {
     assert.equal(typeof ui.failurePresentation, 'function', 'failure classification is missing');

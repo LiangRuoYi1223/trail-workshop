@@ -3,7 +3,7 @@ import RouteMap from './components/RouteMap';
 import TerrainView from './components/TerrainView';
 import RouteColorPicker from './components/RouteColorPicker';
 import { geometryOptions, printPaletteCount } from './route-color';
-import { acquisitionRows, elapsedLabel, failurePresentation, phaseLabel } from './job-progress';
+import { acquisitionRows, elapsedLabel, failurePresentation, idleStatus, phaseLabel } from './job-progress';
 import type { CacheInfo, DemInfo, ImageInfo, ImageMode, SurfaceImageSource, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
 
 const DEFAULTS: ModelOptions = {
@@ -292,7 +292,7 @@ export default function App() {
     void operate('正在保存打印模型', async () => { const result = unwrap(await api!.saveModel({id:previewId,format:exportFormat,options:colors})); if (!result.cancelled && result.path) setSavedPath(result.path); });
   }
   const radiusMax = options.shape === 'circle' ? 0 : options.shape === 'polygon' ? options.widthMm / 2 * Math.cos(Math.PI / options.polygonSides) : Math.min(options.widthMm, options.heightMm) / 2;
-  const status = !sessionReady ? '正在读取上次设置' : busy || (running ? phaseLabel(job!.phase) : previewPending ? '正在加载最终模型' : job?.state === 'cancelled' ? '生成已取消，可以重新开始' : failure ? failure.status : stale ? '参数已修改，请重新生成模型' : job?.state === 'succeeded' ? '模型已生成，可保存打印文件' : '导入路线，调整取景后开始制作');
+  const status = !sessionReady ? '正在读取上次设置' : busy || (running ? phaseLabel(job!.phase) : previewPending ? '正在加载最终模型' : idleStatus(job?.state, failure?.status, stale));
   const materialClasses = preview?.mesh.materialParts?.flatMap(part=>part.faceClasses ?? []);
   const colorCount=preview?.appearance ? printPaletteCount(materialClasses?.length ? [...preview.appearance.faceClasses,...materialClasses] : preview.appearance.faceClasses,options) : options.maxColors;
   const saveLabel=exportFormat==='3mf'?'保存彩色 3MF':exportFormat==='obj'?'保存 OBJ 包':'保存 STL';

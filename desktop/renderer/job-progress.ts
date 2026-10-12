@@ -8,8 +8,17 @@ export function failurePresentation(code: string, imageMode: ImageMode) {
     : code === 'MODEL_TIMEOUT' ? '建模超时，请重新生成模型'
     : code === 'OUTPUT_TIMEOUT' ? '模型核验超时，请重新生成模型'
     : code === 'JOB_TIMEOUT' ? '生成超时，请重新生成模型'
+    : code === 'INPUT_TOO_LARGE' ? '文件导入未完成，请检查文件大小'
     : '生成未完成，请检查设置后重试';
   return { status, imageRecovery, acquisitionRetry };
+}
+
+/** A current operation failure takes precedence over a retained earlier job. */
+export function idleStatus(state: Job['state'] | undefined, failureStatus?: string, stale = false): string {
+  return failureStatus || (state === 'cancelled' ? '生成已取消，可以重新开始'
+    : stale ? '参数已修改，请重新生成模型'
+    : state === 'succeeded' ? '模型已生成，可保存打印文件'
+    : '导入路线，调整取景后开始制作');
 }
 
 function dataSize(bytes: number | undefined): string {
