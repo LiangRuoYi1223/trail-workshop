@@ -84,7 +84,16 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
   }
   function addRaw(ids:[number,number,number],kind:TopKind) {
     const area=cross(xy[ids[0]],xy[ids[1]],xy[ids[2]]);
-    if(Math.abs(area)<1)return;
+    // Snow clips can create resolvable positive facets below the legacy area
+    // floor. Keep them so an interior seam cannot become a through-hole wall.
+    if(snow?area===0:Math.abs(area)<1)return;
+    if(snow&&kind==='frame') {
+      const exported=ids.map(id=>({X:Math.fround(xy[id].X/SCALE),Y:Math.fround(xy[id].Y/SCALE)}));
+      // Flat frame rings can contain a collinear Float32 midpoint whose tiny
+      // arithmetic perturbation makes earcut emit a phantom face. Keep its XY
+      // point for global edge noding, but not the zero-area flat triangle.
+      if(Math.abs(cross(exported[0],exported[1],exported[2]))<=1e-12)return;
+    }
     raw.push({ids:area>0?ids:[ids[0],ids[2],ids[1]],kind});
     if(raw.length*2>MAX_MESH_TRIANGLES)throw new TerrainError('MESH_TOO_COMPLEX','浮雕网格超过三角面预算，请降低采样或减少路线点数');
   }

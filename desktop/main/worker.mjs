@@ -2,9 +2,22 @@ import { readFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { publicError } from './files.mjs';
 
 const electronPort = process.parentPort;
+if (electronPort) {
+  // The dedicated Electron worker shares the map's system proxy settings.
+  // Both DEM GeoTIFF ranges and Sentinel acquisition call the global fetch.
+  const { net } = createRequire(import.meta.url)('electron');
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const target = input instanceof URL ? input.href : input;
+    const url = typeof target === 'string' ? target : target?.url;
+    // GeoTIFF decoders load embedded WASM via data:, unsupported by net.fetch.
+    return /^https?:/i.test(url) ? net.fetch(target, init) : nativeFetch(input, init);
+  };
+}
 const port = electronPort ?? (typeof process.send === 'function' ? {
   on: (name, callback) => process.on(name, callback), postMessage: message => process.send(message),
 } : undefined);

@@ -48,6 +48,18 @@ function checkVolumes(mesh:SnowMesh) {
   let sum=0;for(const material of mesh.materialParts??[]) {const check=validatePart(material,{allowDisconnected:true});assert.equal(check.boundaryEdges,0);assert.equal(check.nonManifoldEdges,0);sum+=check.volumeMm3;}
   close(sum,outer.volumeMm3,Math.max(1e-5,outer.volumeMm3*1e-7));
 }
+function exportedEuler(mesh:PrintableMesh):number {
+  const byCoordinate=new Map<string,number>(),welded:number[]=[],used=new Set<number>(),edges=new Set<string>();
+  for(let i=0;i<mesh.positions.length;i+=3) {
+    const key=mesh.positions.slice(i,i+3).map(value=>Math.round(Math.fround(value)/1e-6)).join(',');
+    if(!byCoordinate.has(key))byCoordinate.set(key,byCoordinate.size);welded.push(byCoordinate.get(key)!);
+  }
+  for(let i=0;i<mesh.indices.length;i+=3) {
+    const [a,b,c]=mesh.indices.slice(i,i+3).map(id=>welded[id]);for(const id of [a,b,c])used.add(id);
+    for(const [from,to] of [[a,b],[b,c],[c,a]])edges.add(from<to?`${from},${to}`:`${to},${from}`);
+  }
+  return used.size-edges.size+mesh.indices.length/3;
+}
 
 test('disabled snow and zero coverage preserve the existing exact integrated surface',()=>{
   const source=terrain(x=>x+10),request={terrainMesh:source,routeSegmentsMm:route,frameWidthMm:0};
@@ -171,4 +183,46 @@ test('snow contours on curved crop chords use globally consistent edge membershi
       assert.ok(result.report.snow);close(result.report.snow.actualCoveragePercent,50,0.02);
     }
   }
+});
+
+test('snow partition retains a positive source facet above weld precision instead of opening an interior hole',()=>{
+  // Synthetic square with 6e-11 / 2e-11 mm² interior facets: the source stays
+  // valid at fixed 1e-6 mm welding and binary STL precision. No private fixture.
+  for(const [dx,cx,dy] of [[0.000012,0.00001,0.00001],[0.000008,0.000006,0.000005]]) {
+    const source:TerrainMeshPayload={positions:[20,20,20,40,20,20,40,40,20,20,40,20,
+      30,30,20,30+dx,30,20,30+cx,30+dy,20,
+      20,20,0,40,20,0,40,40,0,20,40,0],
+      indices:[0,1,4,1,5,4,1,2,5,2,6,5,2,3,6,3,4,6,3,0,4,4,5,6,
+        7,9,8,7,10,9],minSurfaceZ:20,bottomZ:0,gridCols:17,gridRows:17};
+    for(const [a,b] of [[0,1],[1,2],[2,3],[3,0]])source.indices.push(a,a+7,b+7,a,b+7,b);
+    close(assertPrintableMesh(source).volumeMm3,8000);
+    const result=generate(source,100,1,{routeSegmentsMm:[[{x:21,y:25},{x:39,y:25}]]});
+    checkVolumes(result.mesh);assert.ok(result.report.snow);close(result.report.snow.actualCoveragePercent,100);
+    assert.equal(exportedEuler(result.mesh),2,'complete terrain must not gain a through-hole');
+    close(validatePart(part(result.mesh,'snow'),{allowDisconnected:true}).volumeMm3,400);
+    for(let face=0;face<result.mesh.indices.length/3;face++)if(result.mesh.faceKinds?.[face]==='wall') {
+      const vertices=result.mesh.indices.slice(face*3,face*3+3).map(id=>result.mesh.positions.slice(id*3,id*3+3));
+      assert.ok(vertices.every(([x,y])=>x===20||x===40||y===20||y===40),'retained facet must not turn into an internal through-hole wall');
+    }
+  }
+});
+
+test('snow frame nodes collinear Float32 crop points without retaining a phantom flat triangle',()=>{
+  const radius=60,step=120/256,sqrt3=Math.sqrt(3);
+  const diagonal=(offset:number)=>({x:Math.fround(radius-offset/(1+sqrt3)),y:Math.fround(-offset*sqrt3/(1+sqrt3))});
+  const ring=[{x:radius,y:Math.fround(-Number.EPSILON*40)},
+    ...[1,2,3,4,5].map(i=>({x:Math.fround(radius*Math.cos(i*Math.PI/3)),y:Math.fround(radius*Math.sin(i*Math.PI/3))})),
+    diagonal(2*step),{x:Math.fround(radius-step/sqrt3),y:-step},diagonal(step)];
+  const count=ring.length,positions=[0,0,2,...ring.flatMap(p=>[p.x,p.y,2]),0,0,0,...ring.flatMap(p=>[p.x,p.y,0])],indices:number[]=[];
+  for(let i=0;i<count;i++) {
+    const a=i+1,b=(i+1)%count+1,ba=a+count+1,bb=b+count+1;
+    indices.push(0,a,b,count+1,bb,ba,a,ba,bb,a,bb,b);
+  }
+  const source:TerrainMeshPayload={positions,indices,minSurfaceZ:2,bottomZ:0,gridCols:257,gridRows:257};
+  assertPrintableMesh(source);
+  const result=generate(source,100,1,{routeSegmentsMm:[[{x:-10,y:0},{x:10,y:0}]],frameWidthMm:3});
+  checkVolumes(result.mesh);assert.ok(result.report.snow);close(result.report.snow.actualCoveragePercent,100);
+  assert.equal(exportedEuler(result.mesh),2);
+  const canonical={...result.mesh,positions:result.mesh.positions.map(Math.fround),materialParts:result.mesh.materialParts?.map(part=>({...part,positions:part.positions.map(Math.fround)}))};
+  checkVolumes(canonical);assert.equal(exportedEuler(canonical),2);
 });

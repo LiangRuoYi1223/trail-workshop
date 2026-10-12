@@ -132,12 +132,14 @@ export function buildSnowSurface(source:TerrainMeshPayload,coverage:number,maxTh
     positions.push(p.x,p.y,p.z+thickness);terrainHeights.push(p.z);map.set(key,index);actualMax=Math.max(actualMax,thickness);return index;
   }
   function emit(polygon:Point[],wet:boolean) {
-    if(polygon.length<3||area(polygon)<1e-10)return;
+    if(polygon.length<3)return;
     const ids=polygon.map(vertex);
     for(let i=1;i<ids.length-1;i++) {
       const face=[ids[0],ids[i],ids[i+1]],p=face.map(id=>positions.slice(id*3,id*3+3));
       const projected=((p[1][0]-p[0][0])*(p[2][1]-p[0][1])-(p[1][1]-p[0][1])*(p[2][0]-p[0][0]))/2;
-      if(projected<=1e-10)continue;
+      // A positive sliver can still have distinct welded/Float32 vertices.
+      // Dropping it by an area cutoff punches a hole into the source partition.
+      if(projected<=0)continue;
       indices.push(...face);faceKinds.push(wet?'snow':'terrain');
       if(wet){actualArea+=projected;volume+=projected*face.reduce((sum,id)=>sum+positions[id*3+2]-terrainHeights[id],0)/3;}
       if(indices.length/3>MAX_MESH_TRIANGLES/2)throw new TerrainError('MESH_TOO_COMPLEX','积雪分区超过三角面预算，请降低采样');
