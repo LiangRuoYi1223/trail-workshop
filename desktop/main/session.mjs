@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { DesktopError, publicError, validateOptions } from './files.mjs';
+import { MAX_ROUTE_BYTES } from './route-limits.mjs';
 
 const VERSION = 1, MAX_JSON_BYTES = 65536;
 const clone = value => structuredClone(value);
@@ -14,7 +15,7 @@ const imageMode = (value, hasImage = false) => value === undefined ? (hasImage ?
 const imageLookbackMonths = value => value === undefined ? 24 : value;
 
 function source(value, kind) {
-  const maximum = kind === 'route' ? 2 * 1024 * 1024 : kind === 'image' ? 64 * 1024 * 1024 : 256 * 1024 * 1024;
+  const maximum = kind === 'route' ? MAX_ROUTE_BYTES : kind === 'image' ? 64 * 1024 * 1024 : 256 * 1024 * 1024;
   if (!record(value) || Object.keys(value).some(key => !['path', 'fileName', 'bytes', 'sha256', 'isSample', 'name', 'dataset'].includes(key))
     || typeof value.path !== 'string' || value.path.includes('\0') || !isAbsolute(value.path)
     || !text(value.fileName) || basename(value.fileName) !== value.fileName || /[\\/]/.test(value.fileName)

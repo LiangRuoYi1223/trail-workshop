@@ -4,8 +4,8 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DesktopError, checkedInput, publicError, removeOwnedTask, validateOptions, verifyOutput } from './files.mjs';
+import { LARGE_ROUTE_WARNING_BYTES, MAX_ROUTE_BYTES } from './route-limits.mjs';
 
-const MAX_ROUTE_BYTES = 2 * 1024 * 1024;
 const MAX_DEM_BYTES = 256 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_EXPORT_BYTES = 100 * 1024 * 1024;
@@ -52,7 +52,7 @@ function checkedImageSource(source, bounds) {
     ...(source.attribution ? { attribution: source.attribution } : {}) };
 }
 
-export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, demCacheDir, imageCacheDir, onJob = () => {}, jobTimeoutMs, phaseTimeoutMs = {} }) {
+export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, demCacheDir, imageCacheDir, onJob = () => {}, onLargeRoute = async () => {}, jobTimeoutMs, phaseTimeoutMs = {} }) {
   if (typeof taskRoot !== 'string' || !taskRoot || typeof coreModuleUrl !== 'string' || !coreModuleUrl.startsWith('file:')
     || typeof workerFactory !== 'function' || (jobTimeoutMs !== undefined && (!Number.isFinite(jobTimeoutMs) || jobTimeoutMs <= 0))
     || !phaseTimeoutMs || typeof phaseTimeoutMs !== 'object' || Array.isArray(phaseTimeoutMs)
@@ -160,11 +160,12 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
     async addRoute(path, { isSample = false, expectedSha256 } = {}) {
       ensureOpen();
       const file = await checkedInput(path, ['.gpx', '.kml'], MAX_ROUTE_BYTES, 'GPX 或 KML 路线');
+      if (file.bytes > LARGE_ROUTE_WARNING_BYTES) await onLargeRoute({ fileName: file.fileName, bytes: file.bytes });
       const extension = extname(file.fileName), format = extension.toLowerCase() === '.kml' ? 'KML' : 'GPX';
       let contents;
       try { contents = await readFile(file.path); }
       catch { throw new DesktopError('INPUT_READ_FAILED', `无法读取 ${format}，请检查文件权限`); }
-      if (contents.length > MAX_ROUTE_BYTES) throw new DesktopError('INPUT_TOO_LARGE', `${format} 文件超过 2 MB，请先简化路线`);
+      if (contents.length > MAX_ROUTE_BYTES) throw new DesktopError('INPUT_TOO_LARGE', `${format} 文件超过 32 MB，请先简化路线`);
       const digest = sha256(contents), xml = contents.toString('utf8');
       if (expectedSha256 !== undefined && digest !== expectedSha256) throw new DesktopError('SESSION_INPUT_CHANGED', '上次路线文件已改变，请重新导入');
       let parsed;

@@ -84,6 +84,25 @@ test('KML save, reopen and explicit restoration retain options, file checks and 
   assert.deepEqual(await readFile(f.sessionPath), sessionBefore);
 });
 
+for (const [extension, xml] of [['gpx', gpx], ['kml', kml]]) {
+  test(`${extension.toUpperCase()} project saves and restores a 32 MB route without changing its source`, async t => {
+    const contents = Buffer.alloc(33554432, 32); Buffer.from(xml).copy(contents);
+    const f = await fixture(t, { routeXml: contents, routeFileName: `大路线.${extension}` });
+    await f.store.saveSession(f.request); await f.store.close();
+    const saved = await readFile(f.sessionPath), record = JSON.parse(saved.toString('utf8'));
+    assert.equal(record.recentProject.route.bytes, 33554432);
+    assert.equal(record.recentProject.route.sha256, sha(contents));
+    const next = f.fresh(), startup = await next.store.getSession();
+    assert.equal(startup.recentProject.routeFileName, `大路线.${extension}`);
+    const restored = await next.store.restoreSession();
+    assert.equal(restored.route.pointCount, 2); assert.equal(restored.route.name, '恢复测试山路');
+    assert.notEqual(restored.route.id, f.route.id); assert.deepEqual(restored.warnings, []);
+    assert.deepEqual(await readFile(f.sessionPath), saved);
+    assert.equal(sha(await readFile(f.routePath)), sha(contents));
+    assert.equal(f.workerCount(), 0);
+  });
+}
+
 for (const change of ['missing', 'modified']) {
   test(`${change} KML keeps saved metadata and preferences while refusing to restore its DEM project`, async t => {
     const f = await fixture(t, { routeXml: kml, routeFileName: '中文 路线.kml' });
@@ -256,8 +275,8 @@ test('a saved route still undergoes XML and resource-limit validation on restore
   const json = JSON.parse(await readFile(f.sessionPath, 'utf8')); json.recentProject.route.sha256 = sha(broken); json.recentProject.route.bytes = Buffer.byteLength(broken);
   await writeFile(f.sessionPath, JSON.stringify(json));
   const malformed = await f.fresh().store.restoreSession(); assert.equal(malformed.route, undefined); assert.ok(malformed.warnings.some(item => item.includes('路线无法恢复')));
-  await writeFile(f.routePath, Buffer.alloc(2 * 1024 * 1024 + 1, 32));
-  const oversized = await f.fresh().store.restoreSession(); assert.equal(oversized.route, undefined); assert.ok(oversized.warnings.some(item => item.includes('超过 2 MB')));
+  await writeFile(f.routePath, Buffer.alloc(32 * 1024 * 1024 + 1, 32));
+  const oversized = await f.fresh().store.restoreSession(); assert.equal(oversized.route, undefined); assert.ok(oversized.warnings.some(item => item.includes('超过 32 MB')));
 });
 
 test('corrupt and oversized settings show a warning, remain usable and can be replaced atomically', async t => {

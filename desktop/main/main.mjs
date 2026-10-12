@@ -54,6 +54,13 @@ let activeJob, cacheClearing = false, pendingStarts = 0;
 await mkdir(taskRoot, { recursive: true });
 manager = createDesktopManager({ taskRoot, coreModuleUrl, demCacheDir, imageCacheDir,
   workerFactory: ({ workerPath, taskDir }) => utilityProcess.fork(workerPath, [], { cwd: taskDir, stdio: 'pipe', serviceName: 'Terrain model generator' }),
+  onLargeRoute: async ({ fileName, bytes }) => {
+    if (!window || window.isDestroyed()) return;
+    await dialog.showMessageBox(window, { type: 'info', title: '大文件导入提醒',
+      message: '路线文件较大，计算时间会延长。',
+      detail: `${fileName}（${(bytes / 1024 / 1024).toFixed(2)} MB）\n文件超过 2 MB，请耐心等待读取和处理。`,
+      buttons: ['知道了'], defaultId: 0, cancelId: 0, noLink: true });
+  },
   onJob: job => {
     if (['running', 'cancelling'].includes(job.state)) activeJob = job.id;
     else if (activeJob === job.id) activeJob = undefined;

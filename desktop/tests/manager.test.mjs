@@ -14,6 +14,9 @@ const testParent = join(project, 'outputs', 'desktop-tests');
 const coreModuleUrl = pathToFileURL(join(project, 'dist/src/index.js')).href;
 const gpx = '<gpx><trk><name>测试山路</name><trkseg><trkpt lat="30.56" lon="104.28"/><trkpt lat="30.57" lon="104.30"/></trkseg></trk></gpx>';
 const kml = '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>测试山路</name><Placemark><LineString><coordinates>104.28,30.56,100 104.30,30.57,120</coordinates></LineString></Placemark></Document></kml>';
+const paddedRoute = (xml, bytes) => {
+  const contents = Buffer.alloc(bytes, 32); Buffer.from(xml).copy(contents); return contents;
+};
 const delay = ms => new Promise(done => setTimeout(done, ms));
 const waitFor = async condition => {
   const expires = Date.now() + 10000;
@@ -25,7 +28,7 @@ class FakeWorker extends EventEmitter {
   kill() { this.kills++; if (!this.manualExit) queueMicrotask(() => this.emit('exit', 0)); }
   send(message) { this.emit('message', { ...message, jobId: this.request.jobId }); }
 }
-async function fixture(t, { timeout = 1000, manualExit = false, factory, cache = true, coreOverride } = {}) {
+async function fixture(t, { timeout = 1000, manualExit = false, factory, cache = true, coreOverride, onLargeRoute } = {}) {
   await mkdir(testParent, { recursive: true });
   const root = await mkdtemp(join(testParent, 'terrain-desktop-manager-'));
   const routePath = join(root, '中文路线.gpx'), demPath = join(root, '高程.tif'), children = [], events = [];
@@ -39,7 +42,7 @@ async function fixture(t, { timeout = 1000, manualExit = false, factory, cache =
   const manager = createDesktopManager({ taskRoot: join(root, 'tasks'), coreModuleUrl: coreUrl, jobTimeoutMs: timeout,
     ...(cache ? { demCacheDir: join(root, 'elevation-cache') } : {}),
     workerFactory: factory ?? (() => { const child = new FakeWorker(manualExit); children.push(child); return child; }),
-    onJob: job => events.push(job) });
+    onJob: job => events.push(job), ...(onLargeRoute ? { onLargeRoute } : {}) });
   t.after(async () => {
     children.forEach(child => child.emit('exit', 0));
     await manager.close();
@@ -142,9 +145,9 @@ test('KML malformed XML, DTD and unsupported geometry retain actionable format e
   }
 });
 
-test('KML resource limits reject files over 2 MB and lines over 50,000 source points', async t => {
+test('KML resource limits reject files over 32 MB and lines over 50,000 source points', async t => {
   const f = await fixture(t), path = join(f.root, '超大.kml');
-  await writeFile(path, Buffer.alloc(2 * 1024 * 1024 + 1, 32));
+  await writeFile(path, Buffer.alloc(32 * 1024 * 1024 + 1, 32));
   await assert.rejects(f.manager.addRoute(path), { code: 'INPUT_TOO_LARGE' });
   await writeFile(path, `<kml><Placemark><LineString><coordinates>${'104,30 '.repeat(50001)}</coordinates></LineString></Placemark></kml>`);
   await assert.rejects(f.manager.addRoute(path), { code: 'KML_TOO_COMPLEX' });
@@ -184,12 +187,67 @@ test('invalid file types, missing inputs and malformed XML return clear typed er
   await assert.rejects(f.manager.addRoute(f.routePath), { code: 'GPX_UNSUPPORTED_DTD' });
 });
 
-test('GPX resource limits reject files over 2 MB and tracks over 50,000 source points', async t => {
+test('GPX resource limits reject files over 32 MB and tracks over 50,000 source points', async t => {
   const f = await fixture(t);
-  await writeFile(f.routePath, Buffer.alloc(2 * 1024 * 1024 + 1, 32));
+  await writeFile(f.routePath, Buffer.alloc(32 * 1024 * 1024 + 1, 32));
   await assert.rejects(f.manager.addRoute(f.routePath), { code: 'INPUT_TOO_LARGE' });
   await writeFile(f.routePath, `<gpx><trk><trkseg>${'<trkpt lat="30" lon="104"/>'.repeat(50001)}</trkseg></trk></gpx>`);
   await assert.rejects(f.manager.addRoute(f.routePath), { code: 'GPX_TOO_COMPLEX' });
+});
+
+for (const [extension, xml] of [['gpx', gpx], ['kml', kml]]) {
+  test(`${extension.toUpperCase()} import accepts 32 MB inclusively and warns only above 2 MB`, async t => {
+    const notices = [], f = await fixture(t, { onLargeRoute: notice => notices.push(notice) });
+    const path = join(f.root, `边界.${extension}`);
+    for (const [bytes, warningCount] of [[2097151, 0], [2097152, 0], [2097153, 1], [33554432, 2]]) {
+      const contents = paddedRoute(xml, bytes); await writeFile(path, contents);
+      const route = await f.manager.addRoute(path);
+      assert.equal(route.pointCount, 2); assert.equal(route.name, '测试山路');
+      const descriptor = f.manager.sessionSources({ routeId: route.id }).route;
+      assert.equal(descriptor.bytes, bytes); assert.equal(descriptor.sha256, createHash('sha256').update(contents).digest('hex'));
+      assert.equal(notices.length, warningCount);
+      if (warningCount) assert.deepEqual(notices.at(-1), { fileName: `边界.${extension}`, bytes });
+    }
+    await writeFile(path, Buffer.alloc(33554433, 32));
+    await assert.rejects(f.manager.addRoute(path), error => error.code === 'INPUT_TOO_LARGE' && /32 MB/.test(error.message));
+    assert.equal(notices.length, 2, 'an unsupported file must be rejected without a misleading continue notice');
+  });
+}
+
+test('large route notice finishes before file reading and parsing continue', async t => {
+  let notices = 0;
+  const f = await fixture(t, { onLargeRoute: async notice => {
+    notices++;
+    assert.deepEqual(notice, { fileName: '提示后读取.gpx', bytes: 2097153 });
+    // Start with malformed XML: reading before awaiting the notice would fail.
+    await delay(20);
+    await writeFile(join(f.root, notice.fileName), paddedRoute(gpx, notice.bytes));
+  } });
+  const path = join(f.root, '提示后读取.gpx');
+  await writeFile(path, paddedRoute('<gpx><trk>', 2097153));
+  const route = await f.manager.addRoute(path);
+  assert.equal(notices, 1); assert.equal(route.pointCount, 2);
+  assert.equal(route.name, '测试山路');
+});
+
+test('a large route notice does not bypass the 50,000 source-point limit', async t => {
+  const notices = [], f = await fixture(t, { onLargeRoute: notice => notices.push(notice) });
+  for (const [extension, xml, code] of [
+    ['gpx', `<gpx><trk><trkseg>${'<trkpt lat="30" lon="104"/>'.repeat(50001)}</trkseg></trk></gpx>`, 'GPX_TOO_COMPLEX'],
+    ['kml', `<kml><Placemark><LineString><coordinates>${'104,30 '.repeat(50001)}</coordinates></LineString></Placemark></kml>`, 'KML_TOO_COMPLEX'],
+  ]) {
+    const fileName = `过多点.${extension}`, path = join(f.root, fileName);
+    await writeFile(path, paddedRoute(xml, 2097153));
+    await assert.rejects(f.manager.addRoute(path), { code });
+    assert.deepEqual(notices.at(-1), { fileName, bytes: 2097153 });
+  }
+  assert.equal(notices.length, 2);
+});
+
+test('route growth while showing a notice still rejects bytes above 32 MB after reading', async t => {
+  const f = await fixture(t, { onLargeRoute: notice => writeFile(join(f.root, notice.fileName), Buffer.alloc(33554433, 32)) });
+  const path = join(f.root, '变大.gpx'); await writeFile(path, paddedRoute(gpx, 2097153));
+  await assert.rejects(f.manager.addRoute(path), error => error.code === 'INPUT_TOO_LARGE' && /32 MB/.test(error.message));
 });
 
 test('inspection shares core projection and produces usable circle, rectangle and polygon outlines', async t => {
