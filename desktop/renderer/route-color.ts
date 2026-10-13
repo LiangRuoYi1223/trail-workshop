@@ -27,7 +27,15 @@ export function hsvToRgb({ h, s, v }: Hsv): Rgb {
 export function wheelColor(x: number, y: number, value: number): string {
   return rgbToHex(hsvToRgb({ h:(Math.atan2(-y,x)*180/Math.PI+360)%360, s:Math.min(1,Math.hypot(x,y)), v:value }));
 }
-export function geometryOptions<T extends { routeColor?: string }>(options: T): Omit<T,'routeColor'> {
-  const { routeColor, ...geometry } = options;
+export function geometryOptions<T extends { routeColor?: string; grassColor?:string; rockColor?:string; maxColors?:number }>(options: T): Omit<T,'routeColor'|'grassColor'|'rockColor'|'maxColors'> {
+  const { routeColor, grassColor, rockColor, maxColors, ...geometry } = options;
   return geometry;
+}
+export interface PrintColors { maxColors:2|3|4; grassColor:string; rockColor:string; routeColor:string }
+export function appearanceColor(faceClass:string, options:PrintColors):string {
+  if (faceClass==='snow') return '#ffffff';
+  return faceClass==='route' ? options.routeColor : faceClass==='grass' || options.maxColors===2 ? options.grassColor : options.rockColor;
+}
+export function printPaletteCount(classes:readonly string[],options:PrintColors):number {
+  return new Set(classes.map(role=>appearanceColor(role,options).toLowerCase())).size;
 }

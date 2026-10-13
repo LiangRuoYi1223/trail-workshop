@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { parseGpxXml } from './gpx/parse-gpx.js';
+import { detectRouteFormat, parseRouteXml } from './route/parse-route.js';
 import { createTerrainFrame } from './geo/frame.js';
 import { TerrainError } from './errors.js';
 import { buildHeightfieldTerrainMesh, estimateTriangleCount, MAX_MESH_TRIANGLES } from './vendor/trailprint/heightfield-mesh.js';
@@ -19,9 +19,11 @@ export async function generateTerrain(request: GenerateTerrainRequest): Promise<
   const progress=(phase:GenerationProgress['phase'],value:number,message:string)=>{
     request.signal?.throwIfAborted(); request.onProgress?.({phase,progress:value,message});
   };
-  progress('gpx',0,'解析 GPX');
-  const route=parseGpxXml(request.gpxXml,{fileName:request.fileName});
-  if(!route.segments.some(s=>s.points.length>=2))throw new TerrainError('GPX_TOO_SHORT','轨迹需要至少一个含两个有效点的连续段');
+  progress('gpx',0,'解析路线');
+  const route=parseRouteXml(request.gpxXml,{fileName:request.fileName});
+  if(!route.segments.some(s=>s.points.length>=2))throw new TerrainError(
+    detectRouteFormat(request.gpxXml,{fileName:request.fileName})==='kml'?'KML_TOO_SHORT':'GPX_TOO_SHORT',
+    '轨迹需要至少一个含两个有效点的连续段');
   if(route.crossesAntimeridian)throw new TerrainError('GEO_UNSUPPORTED','阶段 1 暂不支持跨日期变更线的路线');
   progress('frame',0.1,'确定独立于下载范围的模型尺度');
   const frame=createTerrainFrame(route.segments.flatMap(s=>s.points),options);

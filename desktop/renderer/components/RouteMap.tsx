@@ -25,7 +25,7 @@ const ROTATION_ICON = L.divIcon({ className: 'map-rotation-marker', iconSize: [3
   html: '<svg viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="12"/><path d="M9 16a6 6 0 1 1 3 4M8 11l1 5 5-1"/></svg>' });
 
 export default function RouteMap(props: Props) {
-  if (!props.route) return <div className="workspace-empty"><h2>先导入一条路线</h2><p>选择两步路导出的 GPX，在地图上调整地形范围，再生成打印模型。</p><p className="empty-contract">自动获取高程，也可选用本地高程文件。</p></div>;
+  if (!props.route) return <div className="workspace-empty"><h2>先导入一条路线</h2><p>选择徒步软件导出的 GPX 或 KML，在地图上调整地形范围，再生成打印模型。</p><p className="empty-contract">自动获取高程，也可选用本地高程文件。</p></div>;
   return <MapBoundary key={props.route.id} inspection={props.inspection} pending={props.pending} routeColor={props.options.routeColor} routeWidthMm={props.options.routeWidthMm}><MapScene {...props} route={props.route} /></MapBoundary>;
 }
 
@@ -284,6 +284,6 @@ function MapScene({ route, inspection, options, pending, locked, onCenter, onCha
     {menu && <div className="map-center-menu" role="menu" aria-label="取景中心操作" style={{left:menu.x,top:menu.y}} onKeyDown={event=>{if(event.key==='Tab'){setMenu(null);}}}><button role="menuitem" ref={menuButton} onClick={()=>{focusRotation.current=true;setMenu(null);setChoosing(false);setRotating(true);}}>旋转取景</button><button role="menuitem" onClick={()=>{setMenu(null);if(inspection)onChange({...options,center:inspection.selection.center,groundWidthM:inspection.selection.groundWidthM,bearingDeg:0});}}>恢复朝向</button></div>}
     {rotating && <div className="map-rotation-status" role="status">拖动圆形手柄旋转 · {rotationAngle.toFixed(1)}°<button onClick={()=>setRotating(false)}>完成</button></div>}
     {(choosing || pending || mapError || editError || tileError && basemap) && <div className={`map-notice${tileError || mapError || editError ? ' map-notice-warning' : ''}`} role="status">{mapError || editError || (choosing ? '点击地图，移动取景中心。' : pending ? '正在更新取景范围…' : '底图未完整加载。路线与取景仍可调整，不影响建模。')}</div>}
-    <div className="map-caption"><span><i className="legend-line" style={{borderColor:options.routeColor}} />GPX 路线</span><span><i className="legend-outline" />山体取景</span>{inspection && <span>地面 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km</span>}<span className="map-help">拖动顶点调整范围 · 拖动十字移动 · 右键中心旋转</span></div>
+    <div className="map-caption"><span><i className="legend-line" style={{borderColor:options.routeColor}} />徒步路线</span><span><i className="legend-outline" />山体取景</span>{inspection && <span>地面 {(inspection.selection.groundWidthM / 1000).toFixed(2)} × {(inspection.selection.groundHeightM / 1000).toFixed(2)} km</span>}<span className="map-help">拖动顶点调整范围 · 拖动十字移动 · 右键中心旋转</span></div>
   </div>;
 }

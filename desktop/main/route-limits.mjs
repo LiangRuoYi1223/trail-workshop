@@ -1,0 +1,2 @@
+export const MAX_ROUTE_BYTES = 32 * 1024 * 1024;
+export const LARGE_ROUTE_WARNING_BYTES = 2 * 1024 * 1024;

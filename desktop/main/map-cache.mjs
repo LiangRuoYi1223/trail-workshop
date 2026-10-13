@@ -178,7 +178,7 @@ export async function cacheDirectoryBytes(directory) {
 
 export async function clearOwnedCacheDirectory(userDataDirectory, name) {
   const parent = resolve(userDataDirectory), target = resolve(parent, name);
-  if (!['map-tiles', 'elevation-cache'].includes(name) || dirname(target) !== parent) throw new DesktopError('CACHE_PATH_INVALID', '缓存目录检查失败');
+  if (!['map-tiles', 'elevation-cache', 'surface-cache'].includes(name) || dirname(target) !== parent) throw new DesktopError('CACHE_PATH_INVALID', '缓存目录检查失败');
   await checkedCacheDirectory(parent, true);
   await checkedCacheDirectory(target);
   await checkedCacheDirectory(parent);

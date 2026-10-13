@@ -4,9 +4,14 @@ import { createHash } from 'node:crypto';
 import { TerrainError } from '../errors.js';
 import type { GenerationResult } from '../types.js';
 import { writeBinaryStl } from '../vendor/trailprint/stl-writer.js';
+import type { ModelAppearance } from '../appearance/types.js';
+import { validateModelAppearance } from '../appearance/palette.js';
+import { validateMaterialParts } from './material-parts.js';
+
+type PublishResult = GenerationResult & { appearance?: ModelAppearance };
 
 /** Exclusive cross-process output lock, staged bundle and rollback for ordinary I/O failures. */
-export async function publishTerrainOutput(output: string, result: GenerationResult): Promise<{warnings:string[]}> {
+export async function publishTerrainOutput(output: string, result: PublishResult): Promise<{warnings:string[]}> {
   const target = resolve(output), parent = dirname(target);
   if (!target.toLowerCase().endsWith('.stl')) throw new TerrainError('CONFIG_INVALID', '输出文件名必须以 .stl 结尾');
   await mkdir(parent, { recursive: true });
@@ -25,7 +30,7 @@ export async function publishTerrainOutput(output: string, result: GenerationRes
   }
 }
 
-async function publishLocked(target:string, result:GenerationResult, warnings:string[]):Promise<void> {
+async function publishLocked(target:string, result:PublishResult, warnings:string[]):Promise<void> {
   const parent=dirname(target);
   const targets = [target, target.replace(/\.stl$/i, '.report.json'), target.replace(/\.stl$/i, '.preview.json')];
   const exists: boolean[] = [];
@@ -45,11 +50,20 @@ async function publishLocked(target:string, result:GenerationResult, warnings:st
   const backed: number[] = [], published: number[] = [];
   let preserveStage = false;
   try {
+    if (result.mesh.materialParts) {
+      validateMaterialParts(result.mesh);
+      result.report.materialPartsSha256 = createHash('sha256').update(JSON.stringify(result.mesh.materialParts)).digest('hex');
+    }
+    if (result.appearance) {
+      validateModelAppearance(result.appearance, result.mesh.indices.length / 3);
+      result.report.appearanceHash = result.appearance.hash;
+    }
     await writeBinaryStl(staged[0], result.mesh, 'Chuanheng_Terrain');
     const stl = await readFile(staged[0]);
     result.report.output = { file: basename(target), bytes: stl.byteLength, sha256: createHash('sha256').update(stl).digest('hex') };
     await writeFile(staged[1], JSON.stringify(result.report, null, 2) + '\n');
-    await writeFile(staged[2], JSON.stringify({stage:result.report.stage, unit:'mm', mesh:result.mesh, routeSegmentsMm:result.routeSegmentsMm, crop:result.report.selection,report:result.report}) + '\n');
+    await writeFile(staged[2], JSON.stringify({stage:result.report.stage, unit:'mm', mesh:result.mesh, routeSegmentsMm:result.routeSegmentsMm, crop:result.report.selection,report:result.report,
+      ...(result.appearance ? { appearance: result.appearance } : {})}) + '\n');
     for (let i = 0; i < targets.length; i++) if (exists[i]) {
       await rename(targets[i], backups[i]);
       backed.push(i);

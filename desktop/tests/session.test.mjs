@@ -10,13 +10,14 @@ import { createSessionStore } from '../main/session.mjs';
 const project = resolve(import.meta.dirname, '../..'), parent = join(project, 'artifacts', 'desktop-session-tests');
 const coreModuleUrl = pathToFileURL(join(project, 'dist/src/index.js')).href;
 const gpx = '<gpx><trk><name>恢复测试山路</name><trkseg><trkpt lat="30.56" lon="104.28"/><trkpt lat="30.57" lon="104.30"/></trkseg></trk></gpx>';
+const kml = '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>恢复测试山路</name><Placemark><LineString><coordinates>104.28,30.56,100 104.30,30.57,120</coordinates></LineString></Placemark></Document></kml>';
 const options = { widthMm: 130, heightMm: 90, bearingDeg: 26, gridColumns: 65, center: { lat: 30.565, lon: 104.29 }, groundWidthM: 3500 };
 const sha = value => createHash('sha256').update(value).digest('hex');
 
-async function fixture(t) {
+async function fixture(t, { routeXml = gpx, routeFileName = '中文 路线.gpx' } = {}) {
   await mkdir(parent, { recursive: true });
-  const root = await mkdtemp(join(parent, 'case-')), data = join(root, 'profile'), routePath = join(root, '中文 路线.gpx'), demPath = join(root, '地形.tif');
-  await Promise.all([mkdir(data), writeFile(routePath, gpx), copyFile(join(project, 'data/copernicus-longquanshan.tif'), demPath)]);
+  const root = await mkdtemp(join(parent, 'case-')), data = join(root, 'profile'), routePath = join(root, routeFileName), demPath = join(root, '地形.tif');
+  await Promise.all([mkdir(data), writeFile(routePath, routeXml), copyFile(join(project, 'data/copernicus-longquanshan.tif'), demPath)]);
   const managers = [], stores = []; let workers = 0;
   const fresh = () => {
     const manager = createDesktopManager({ taskRoot: join(root, `tasks-${managers.length}`), coreModuleUrl, demCacheDir: join(data, 'elevation-cache'),
@@ -48,6 +49,89 @@ test('restart restores validated project with new opaque ids and geography only 
   assert.ok(!JSON.stringify(restored).includes(f.root));
   const inspection = await next.manager.inspect({ routeId: restored.route.id, options: restored.options });
   assert.equal(inspection.selection.groundWidthM, 3500); assert.equal(inspection.selection.bearingDeg, 26);
+});
+
+test('existing schema-v1 KML project is offered without rewriting its saved record', async t => {
+  const f = await fixture(t); await f.store.saveSession(f.request); await f.store.close();
+  const path = join(f.root, '中文 路线.KML'); await writeFile(path, kml);
+  const stored = JSON.parse(await readFile(f.sessionPath, 'utf8'));
+  stored.recentProject.route = { ...stored.recentProject.route, path, fileName: '中文 路线.KML',
+    bytes: Buffer.byteLength(kml), sha256: sha(kml) };
+  await writeFile(f.sessionPath, JSON.stringify(stored));
+  const before = await readFile(f.sessionPath), startup = await f.fresh().store.getSession();
+  assert.equal(startup.schemaVersion, 1); assert.equal(startup.recentProject?.routeFileName, '中文 路线.KML');
+  assert.deepEqual(startup.warnings, []); assert.ok(!JSON.stringify(startup).includes(f.root));
+  assert.deepEqual(await readFile(f.sessionPath), before); assert.equal(f.workerCount(), 0);
+});
+
+test('KML save, reopen and explicit restoration retain options, file checks and opaque route ids', async t => {
+  const f = await fixture(t, { routeXml: kml, routeFileName: '中文 路线.KML' });
+  const routeBefore = await readFile(f.routePath), demBefore = await readFile(f.demPath);
+  await f.store.saveSession(f.request); await f.store.close();
+  const sessionBefore = await readFile(f.sessionPath), stored = JSON.parse(sessionBefore.toString('utf8'));
+  assert.equal(stored.schemaVersion, 1); assert.equal(stored.recentProject.route.sha256, sha(routeBefore));
+  const next = f.fresh(), startup = await next.store.getSession();
+  assert.equal(startup.recentProject.routeFileName, '中文 路线.KML'); assert.equal(startup.preferences.options.center, undefined);
+  const restored = await next.store.restoreSession();
+  assert.equal(restored.route.name, '恢复测试山路'); assert.equal(restored.route.fileName, '中文 路线.KML');
+  assert.notEqual(restored.route.id, f.route.id); assert.notEqual(restored.dem.id, f.dem.id);
+  assert.deepEqual(restored.options.center, options.center); assert.equal(restored.options.groundWidthM, 3500);
+  assert.equal(restored.demMode, 'local'); assert.deepEqual(restored.warnings, []); assert.equal(f.workerCount(), 0);
+  assert.ok(!JSON.stringify(restored).includes(f.root));
+  const inspection = await next.manager.inspect({ routeId: restored.route.id, options: restored.options });
+  assert.equal(inspection.selection.groundWidthM, 3500); assert.equal(inspection.selection.bearingDeg, 26);
+  assert.deepEqual(await readFile(f.routePath), routeBefore); assert.deepEqual(await readFile(f.demPath), demBefore);
+  assert.deepEqual(await readFile(f.sessionPath), sessionBefore);
+});
+
+for (const [extension, xml] of [['gpx', gpx], ['kml', kml]]) {
+  test(`${extension.toUpperCase()} project saves and restores a 32 MB route without changing its source`, async t => {
+    const contents = Buffer.alloc(33554432, 32); Buffer.from(xml).copy(contents);
+    const f = await fixture(t, { routeXml: contents, routeFileName: `大路线.${extension}` });
+    await f.store.saveSession(f.request); await f.store.close();
+    const saved = await readFile(f.sessionPath), record = JSON.parse(saved.toString('utf8'));
+    assert.equal(record.recentProject.route.bytes, 33554432);
+    assert.equal(record.recentProject.route.sha256, sha(contents));
+    const next = f.fresh(), startup = await next.store.getSession();
+    assert.equal(startup.recentProject.routeFileName, `大路线.${extension}`);
+    const restored = await next.store.restoreSession();
+    assert.equal(restored.route.pointCount, 2); assert.equal(restored.route.name, '恢复测试山路');
+    assert.notEqual(restored.route.id, f.route.id); assert.deepEqual(restored.warnings, []);
+    assert.deepEqual(await readFile(f.sessionPath), saved);
+    assert.equal(sha(await readFile(f.routePath)), sha(contents));
+    assert.equal(f.workerCount(), 0);
+  });
+}
+
+for (const change of ['missing', 'modified']) {
+  test(`${change} KML keeps saved metadata and preferences while refusing to restore its DEM project`, async t => {
+    const f = await fixture(t, { routeXml: kml, routeFileName: '中文 路线.kml' });
+    await f.store.saveSession(f.request);
+    const sessionBefore = await readFile(f.sessionPath), changed = kml.replace('104.28', '105.28');
+    if (change === 'missing') await unlink(f.routePath); else await writeFile(f.routePath, changed);
+    const restored = await f.fresh().store.restoreSession();
+    assert.equal(restored.route, undefined); assert.equal(restored.dem, undefined);
+    assert.equal(restored.options.widthMm, 130); assert.equal(restored.options.center, undefined);
+    assert.ok(restored.warnings.some(item => item.includes('路线无法恢复')));
+    if (change === 'modified') {
+      assert.ok(restored.warnings.some(item => item.includes('文件已改变')));
+      assert.equal(await readFile(f.routePath, 'utf8'), changed);
+    }
+    assert.deepEqual(await readFile(f.sessionPath), sessionBefore); assert.equal(f.workerCount(), 0);
+  });
+}
+
+test('legacy KML sample project stays suppressed while keeping its usable preferences', async t => {
+  const f = await fixture(t, { routeXml: kml, routeFileName: '旧示例.kml' });
+  const sample = await f.manager.addRoute(f.routePath, { isSample: true });
+  await f.store.saveSession({ ...f.request, routeId: sample.id }); await f.store.close();
+  const before = await readFile(f.sessionPath), next = f.fresh(), startup = await next.store.getSession();
+  assert.equal(startup.recentProject, undefined); assert.equal(startup.preferences.options.widthMm, 130);
+  assert.ok(startup.warnings.some(item => item.includes('示例')));
+  const restored = await next.store.restoreSession();
+  assert.equal(restored.route, undefined); assert.equal(restored.dem, undefined);
+  assert.equal(restored.options.widthMm, 130); assert.equal(restored.options.center, undefined);
+  assert.deepEqual(await readFile(f.sessionPath), before); assert.equal(f.workerCount(), 0);
 });
 
 test('default startup is usable and recovery never starts computation', async t => {
@@ -83,6 +167,40 @@ test('legacy sessions missing route appearance fields restore the existing red o
   }
   assert.ok(restored.route); assert.deepEqual(restored.warnings, []);
 });
+
+for (const [sampleSource, demMode] of [['route', 'local'], ['dem', 'local'], ['dem', 'auto']]) {
+  test(`legacy sample ${sampleSource} in ${demMode} mode is not offered or read during project recovery`, async t => {
+    const f = await fixture(t);
+    await f.store.saveSession({ ...f.request, options: { ...options, routeColor: '#12abf0', routeWidthMm: 2.4, routeHeightMm: 3.5 } });
+    await f.store.close();
+    const stored = JSON.parse(await readFile(f.sessionPath, 'utf8'));
+    stored.recentProject[sampleSource].isSample = true;
+    stored.recentProject.demMode = demMode;
+    await writeFile(f.sessionPath, JSON.stringify(stored));
+    const persisted = await readFile(f.sessionPath);
+    const next = f.fresh();
+    let routeReads = 0, demReads = 0;
+    const addRoute = next.manager.addRoute, addDem = next.manager.addDem;
+    next.manager.addRoute = (...args) => { routeReads++; return addRoute(...args); };
+    next.manager.addDem = (...args) => { demReads++; return addDem(...args); };
+    const startup = await next.store.getSession();
+    assert.equal(startup.recentProject, undefined);
+    assert.ok(startup.warnings.some(item => item.includes('示例') && item.includes('GPX')));
+    const restored = await next.store.restoreSession();
+    assert.equal(restored.route, undefined); assert.equal(restored.dem, undefined);
+    for (const settings of [startup.preferences.options, restored.options]) {
+      assert.equal(settings.widthMm, 130); assert.equal(settings.heightMm, 90); assert.equal(settings.bearingDeg, 26);
+      assert.equal(settings.routeColor, '#12abf0'); assert.equal(settings.routeWidthMm, 2.4); assert.equal(settings.routeHeightMm, 3.5);
+      assert.equal(settings.center, undefined); assert.equal(settings.groundWidthM, undefined);
+    }
+    assert.equal(restored.demMode, 'local'); assert.equal(restored.offlineOnly, true);
+    assert.equal(routeReads, 0); assert.equal(demReads, 0); assert.equal(f.workerCount(), 0);
+    assert.deepEqual(await readFile(f.sessionPath), persisted, 'recovery must not rewrite a legacy project implicitly');
+    await next.store.saveSession({ demMode: 'auto', offlineOnly: false, options: { widthMm: 160 } });
+    assert.equal(JSON.parse(await readFile(f.sessionPath, 'utf8')).recentProject, undefined);
+    assert.equal((await f.fresh().store.getSession()).recentProject, undefined);
+  });
+}
 
 test('invalid route color or height never replaces the last saved project', async t => {
   const f = await fixture(t); await f.store.saveSession(f.request); const before = await readFile(f.sessionPath);
@@ -157,8 +275,8 @@ test('a saved route still undergoes XML and resource-limit validation on restore
   const json = JSON.parse(await readFile(f.sessionPath, 'utf8')); json.recentProject.route.sha256 = sha(broken); json.recentProject.route.bytes = Buffer.byteLength(broken);
   await writeFile(f.sessionPath, JSON.stringify(json));
   const malformed = await f.fresh().store.restoreSession(); assert.equal(malformed.route, undefined); assert.ok(malformed.warnings.some(item => item.includes('路线无法恢复')));
-  await writeFile(f.routePath, Buffer.alloc(2 * 1024 * 1024 + 1, 32));
-  const oversized = await f.fresh().store.restoreSession(); assert.equal(oversized.route, undefined); assert.ok(oversized.warnings.some(item => item.includes('超过 2 MB')));
+  await writeFile(f.routePath, Buffer.alloc(32 * 1024 * 1024 + 1, 32));
+  const oversized = await f.fresh().store.restoreSession(); assert.equal(oversized.route, undefined); assert.ok(oversized.warnings.some(item => item.includes('超过 32 MB')));
 });
 
 test('corrupt and oversized settings show a warning, remain usable and can be replaced atomically', async t => {

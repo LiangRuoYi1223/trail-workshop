@@ -13,7 +13,16 @@ export interface TerrainCropRegion {
 export interface TerrainMeshPayload {
   positions: number[]; indices: number[]; minSurfaceZ: number;
   bottomZ: number; gridCols: number; gridRows: number;
-  faceKinds?: Array<'terrain'|'route'|'route-wall'|'frame'|'wall'|'bottom'>;
+  faceKinds?: Array<'terrain'|'route'|'route-wall'|'snow'|'snow-wall'|'frame'|'wall'|'bottom'>;
+  materialParts?: MaterialPart[];
+}
+/** Closed material volumes in the same millimetre coordinate system as the external surface. */
+export interface MaterialPart {
+  id: 'terrain'|'snow'|'route';
+  positions: number[];
+  indices: number[];
+  faceKinds?: TerrainMeshPayload['faceKinds'];
+  faceClasses?: Array<'grass'|'rock'|'snow'|'route'>;
 }
 export interface TerrainHeightPreview {
   cols: number; rows: number; heights: Float64Array | number[];

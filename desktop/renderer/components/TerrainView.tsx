@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { Preview } from '../types';
+import type { Preview, AppearanceOptions } from '../types';
+import { appearanceColor } from '../route-color';
 
-export default function TerrainView({ preview, routeColor }: { preview: Preview | null; routeColor: string }) {
+export default function TerrainView({ preview, options }: { preview: Preview | null; options: AppearanceOptions }) {
   const container = useRef<HTMLDivElement>(null);
   const actions = useRef<{ reset(): void; top(): void } | null>(null);
-  const recolor = useRef<((value:string)=>void) | null>(null);
+  const recolor = useRef<((value:AppearanceOptions)=>void) | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     const host = container.current;
@@ -35,14 +36,13 @@ export default function TerrainView({ preview, routeColor }: { preview: Preview 
       camera.up.set(0, 0, 1);
       const { positions, indices, faceKinds } = preview.mesh;
       const expanded = new Float32Array(indices.length * 3), colors = new Float32Array(indices.length * 3);
-      const palette: Record<string, THREE.Color> = {
-        terrain: new THREE.Color('#799278'), route: new THREE.Color(routeColor), 'route-wall': new THREE.Color(routeColor).multiplyScalar(.78),
-        frame: new THREE.Color('#c7c2ab'), wall: new THREE.Color('#a9aa92'), bottom: new THREE.Color('#a9aa92'),
-      };
+      const classes=preview.appearance?.faceClasses??preview.mesh.faceClasses??Array.from({length:indices.length/3},(_,i)=>faceKinds?.[i]==='route'||faceKinds?.[i]==='route-wall'?'route':faceKinds?.[i]==='snow'||faceKinds?.[i]==='snow-wall'?'snow':faceKinds?.[i]==='terrain'?'grass':'rock');
+      const colorPalette=(value:AppearanceOptions)=>Object.fromEntries(['grass','rock','snow','route'].map(role=>[role,new THREE.Color(appearanceColor(role,value))]));
+      const palette=colorPalette(options);
       for (let i = 0; i < indices.length; i++) {
         const source = indices[i] * 3, destination = i * 3;
         expanded[destination] = positions[source]; expanded[destination + 1] = positions[source + 1]; expanded[destination + 2] = positions[source + 2];
-        const color = palette[faceKinds?.[Math.floor(i / 3)] ?? 'terrain'] ?? palette.terrain;
+        const color = palette[classes[Math.floor(i/3)]]??palette.rock;
         color.toArray(colors, destination);
       }
       geometry = new THREE.BufferGeometry();
@@ -68,10 +68,9 @@ export default function TerrainView({ preview, routeColor }: { preview: Preview 
       };
       controls.addEventListener('change', draw);
       recolor.current = value => {
-        const top = new THREE.Color(value), wall = top.clone().multiplyScalar(.78);
+        const currentPalette=colorPalette(value);
         for (let i=0;i<indices.length;i++) {
-          const kind=faceKinds?.[Math.floor(i/3)];
-          if (kind==='route' || kind==='route-wall') (kind==='route' ? top : wall).toArray(colors,i*3);
+          (currentPalette[classes[Math.floor(i/3)]]??currentPalette.rock).toArray(colors,i*3);
         }
         geometry!.getAttribute('color').needsUpdate=true; draw();
       };
@@ -108,10 +107,10 @@ export default function TerrainView({ preview, routeColor }: { preview: Preview 
       observer.observe(host);
       window.addEventListener('resize', resizeHandler);
       resizeHandler();
-      lostHandler = (event: Event) => { event.preventDefault(); setError('三维显示已中断。切换到地图取景后再打开模型可重新加载；已生成的 STL 仍可保存。'); };
+      lostHandler = (event: Event) => { event.preventDefault(); setError('三维显示已中断。切换到地图取景后再打开模型可重新加载；已生成的模型仍可保存。'); };
       renderer.domElement.addEventListener('webglcontextlost', lostHandler);
     } catch {
-      setError('这台电脑暂时无法显示三维模型。可继续保存已生成的 STL，并在切片软件中查看。');
+      setError('这台电脑暂时无法显示三维模型。可继续保存已生成的打印文件，并在切片软件中查看。');
     }
     return () => {
       disposed = true; if (frame !== undefined) cancelAnimationFrame(frame);
@@ -125,13 +124,14 @@ export default function TerrainView({ preview, routeColor }: { preview: Preview 
       recolor.current = null;
     };
   }, [preview]);
-  useEffect(() => { recolor.current?.(routeColor); }, [routeColor]);
-  if (!preview) return <div className="workspace-empty"><h2>等待生成三维地形</h2><p>导入路线，检查地图取景和尺寸，再点击“生成模型”。</p><p className="empty-contract">山体、浮雕路线和底座将生成一个完整实体。</p></div>;
+  useEffect(() => { recolor.current?.(options); }, [options.maxColors,options.grassColor,options.rockColor,options.routeColor]);
+  if (!preview) return <div className="workspace-empty"><h2>等待生成三维地形</h2><p>导入路线，检查地图取景和尺寸，再点击“生成模型”。</p><p className="empty-contract">山体、浮雕路线和底座组成统一闭合外形；开启积雪后，路线位于当地雪面上。</p></div>;
+  const hasSnow = (preview.appearance?.faceClasses ?? preview.mesh.faceClasses)?.includes('snow') || preview.mesh.faceKinds?.some(kind=>kind==='snow'||kind==='snow-wall');
   return <div className="terrain-view">
     <div ref={container} className="terrain-canvas" />
     {error ? <div role="alert" className="render-error">{error}</div> : <>
       <div className="view-actions"><button onClick={() => actions.current?.top()}>俯视</button><button onClick={() => actions.current?.reset()}>恢复视角</button></div>
-      <div className="view-caption"><span><i className="legend-dot terrain-dot" />山体</span><span><i className="legend-dot route-dot" style={{background:routeColor}} />路线</span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
+      <div className="view-caption"><span><i className="legend-dot" style={{background:options.grassColor}} />{options.maxColors===2?'山体':'草地'}</span>{options.maxColors!==2&&<span><i className="legend-dot" style={{background:options.rockColor}} />山石／底座</span>}{hasSnow&&<span><i className="legend-dot snow-dot" style={{background:'#ffffff'}} />白雪</span>}<span><i className="legend-dot route-dot" style={{background:options.routeColor}} />路线</span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
     </>}
   </div>;
 }

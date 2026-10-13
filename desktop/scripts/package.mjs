@@ -6,7 +6,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
-const releaseRoot=path.join(root,'desktop','release','v0.3.5');
+const releaseRoot=path.join(root,'desktop','release','v0.4.7');
 const releasePath=path.join(releaseRoot,'TerrainWorkshop-win32-x64');
 if(existsSync(releasePath))throw new Error('软件输出目录已经存在，请先保留或移走上一版完整文件夹，再重新打包。');
 const parent=path.join(root,'artifacts','desktop-packaging');
@@ -18,18 +18,16 @@ const electronZipDir=zipDirectoryArgument<0?undefined:process.argv[zipDirectoryA
 if(zipDirectoryArgument>=0&&!electronZipDir)throw new Error('请指定 Electron ZIP 缓存目录。');
 for(const [from,to] of [
   ['dist/src','core'],['desktop/main','main'],['desktop/dist/renderer','renderer'],
-  ['fixtures/sample-trail.gpx','fixtures/sample-trail.gpx'],
-  ['data/copernicus-longquanshan.tif','fixtures/copernicus-longquanshan.tif'],
-  ['data/copernicus-longquanshan.source.json','fixtures/copernicus-longquanshan.source.json'],
   ['THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'],
   ['src/vendor/trailprint/LICENSE','core/vendor/trailprint/LICENSE'],
   ['desktop/licenses','licenses'],
 ]) {
   const target=path.join(stage,to);await mkdir(path.dirname(target),{recursive:true});
-  await cp(path.join(root,from),target,{recursive:true,errorOnExist:true,force:false});
+  await cp(path.join(root,from),target,{recursive:true,errorOnExist:true,force:false,
+    filter:source=>path.basename(source)!=='Copernicus-GLO30-SAMPLE.md'});
 }
 const sourcePackage=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));
-const application={name:'terrain-workshop',productName:'徒步地形工坊',version:'0.3.5',author:'TerrainWorkshop contributors',private:true,type:'module',main:'main/main.mjs',dependencies:sourcePackage.dependencies};
+const application={name:'terrain-workshop',productName:'徒步地形工坊',version:'0.4.7',author:'TerrainWorkshop contributors',private:true,type:'module',main:'main/main.mjs',dependencies:sourcePackage.dependencies};
 await writeFile(path.join(stage,'package.json'),JSON.stringify(application,null,2)+'\n');
 const lock=JSON.parse(await readFile(path.join(root,'package-lock.json'),'utf8'));
 lock.name=application.name;lock.version=application.version;
@@ -44,5 +42,8 @@ const outputs=await packager({dir:stage,name:'TerrainWorkshop',executableName:'T
   asar:false,prune:false,overwrite:false,tmpdir:temporary,electronZipDir,download:{cacheRoot:path.join(root,'artifacts','electron-cache')},
   appCopyright:'TerrainWorkshop contributors; third-party licenses included',
 });
+for(const output of outputs)for(const document of ['更新说明-v0.4.7.txt','最终验证清单-v0.4.7.txt']) {
+  await cp(path.join(root,document),path.join(output,document),{errorOnExist:true,force:false});
+}
 await writeFile(path.join(root,'artifacts','desktop-packaging','latest.json'),JSON.stringify({stage,outputs,version:application.version,electron:sourcePackage.devDependencies.electron},null,2)+'\n');
 console.log(JSON.stringify({application:outputs[0],executable:path.join(outputs[0],'TerrainWorkshop.exe')}));

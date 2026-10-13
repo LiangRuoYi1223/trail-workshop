@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { createDesktopManager } from '../main/manager.mjs';
 import { createSessionStore } from '../main/session.mjs';
+import { saveModelFile } from '../main/save-model.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const output=join(root,'artifacts','map-editing-check');
 mkdirSync(output,{recursive:true});
-app.setPath('userData',join(output,'profile'));
+app.setPath('userData',join(output,'profile-'+Date.now()));
 app.disableHardwareAcceleration();
 protocol.registerSchemesAsPrivileged([{scheme:'terrain-map',privileges:{standard:true,secure:true}}]);
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -18,22 +19,25 @@ const errors=[];
 async function run() {
   await app.whenReady();
   protocol.handle('terrain-map',()=>new Response(null,{status:404}));
-  let savedOptions,lastInspection,lastJob;
+  let savedOptions,lastInspection,lastJob,saved;
   manager=createDesktopManager({taskRoot:join(output,'tasks'),coreModuleUrl:pathToFileURL(join(root,'dist/src/index.js')).href,
     workerFactory:({workerPath,taskDir})=>utilityProcess.fork(workerPath,[],{cwd:taskDir,stdio:'pipe'}),
     onJob:job=>{lastJob=job;window?.webContents.send('terrain:job',job);} });
   const session=createSessionStore({userDataDirectory:app.getPath('userData'),manager});
   const handle=(name,fn)=>ipcMain.handle(`terrain:${name}`,async(_event,...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:{code:error.code||'TEST',message:error.message}};}});
-  handle('runtime',()=>({version:'0.3.4',platform:'win32',packaged:false,units:'mm'}));
+  handle('runtime',()=>({version:'0.4.0',platform:'win32',packaged:false,units:'mm'}));
   handle('cache-info',()=>({path:output,elevationBytes:0,mapBytes:0}));
   handle('session-get',()=>session.getSession());
   handle('session-save',request=>{savedOptions=request.options;return session.saveSession(request);});
   handle('session-restore',()=>session.restoreSession());
-  handle('sample',async()=>({route:await manager.addRoute(join(root,'fixtures/sample-trail.gpx'),{isSample:true}),
-    dem:await manager.addDem(join(root,'data/copernicus-longquanshan.tif'),{isSample:true})}));
+  handle('choose-route',()=>manager.addRoute(join(root,'fixtures/sample-trail.gpx')));
+  handle('choose-dem',()=>manager.addDem(join(root,'data/copernicus-longquanshan.tif')));
   handle('inspect',async request=>{lastInspection=await manager.inspect(request);return lastInspection;});
   handle('start',request=>manager.start(request));handle('get',id=>manager.get(id));handle('preview',id=>manager.preview(id));
   handle('cancel',id=>manager.cancel(id));
+  handle('save-model',async request=>{const artifact=await manager.exportModel(request.id,request.format,request.options);
+    saved=await saveModelFile(artifact.bytes,join(output,`地图_验证模型${artifact.extension}`),{overwriteApproved:true});
+    return{cancelled:false,...saved,appearanceHash:artifact.appearanceHash};});
   window=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{preload:join(root,'desktop/main/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   window.webContents.on('console-message',event=>{if(event.level==='error'&&!event.message.includes('terrain-map')){errors.push(event.message);console.error(event.message);}});
   await window.loadFile(join(root,'desktop/dist/renderer/index.html'));
@@ -48,8 +52,17 @@ async function run() {
     for(let i=1;i<=10;i++){await delay(20);window.webContents.sendInputEvent({type:'mouseMove',button:'left',x:Math.round(start.x+(end.x-start.x)*i/10),y:Math.round(start.y+(end.y-start.y)*i/10)});}
     window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(end.x),y:Math.round(end.y)});
   };
-  await wait(()=>js(`!document.querySelector('.sample-button').disabled`),'startup');
-  await click('打开龙泉山示例');
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='导入路线'&&!el.disabled)`),'startup');
+  await js(`const imageMode=document.querySelector('#image-mode');imageMode.value='local';imageMode.dispatchEvent(new Event('change',{bubbles:true}));`);
+  assert.equal(await js(`'loadSample' in window.terrain`),false,'example API is still exposed');
+  assert.equal(await js(`document.body.textContent.includes('龙泉山')`),false,'example is still visible');
+  await js(`const format=document.querySelector('#export-format');format.value='stl';format.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await click('导入路线');
+  await wait(()=>lastInspection&&js(`![...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='local')).disabled`),'route import');
+  await js(`const mode=[...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='local'));mode.value='local';mode.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='选择高程'&&!el.disabled)`),'local elevation mode');
+  await click('选择高程');
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='生成模型'&&!el.disabled)`),'elevation import');
   await wait(()=>js(`document.querySelectorAll('.map-vertex-marker').length===4&&!document.querySelector('.map-actions button').disabled`),'rectangle handles');
   await js(`document.querySelector('.map-basemap input').click();const s=document.querySelector('select');const shape=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='polygon'));shape.value='polygon';shape.dispatchEvent(new Event('change',{bubbles:true}));`);
   await wait(()=>js(`document.querySelectorAll('.map-vertex-marker').length===6&&!document.querySelector('.map-actions button').disabled`),'regular hexagon');
@@ -104,11 +117,14 @@ async function run() {
   const preview=await manager.preview(lastJob.id);
   assert.equal(preview.report.validation.connectedComponents,1);
   assert.equal(preview.report.validation.boundaryEdges,0);
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='保存 STL'&&!el.disabled)`),'STL export ready');
+  await click('保存 STL');await wait(()=>saved&&js(`!!document.querySelector('.saved-path')`),'map STL saved');
+  assert.equal(saved.sha256,lastJob.result.stlSha256);
   assert.equal(errors.length,0,errors.join('\n'));
   const report={passed:true,resizedGroundWidthM:resized.groundWidthM,bearingDeg:savedOptions.bearingDeg,shape:savedOptions.shape,
-    polygonSides:savedOptions.polygonSides,printDimensions:lastJob.result.dimensions,validation:preview.report.validation,errors};
+    polygonSides:savedOptions.polygonSides,printDimensions:lastJob.result.dimensions,validation:preview.report.validation,saved,errors};
   await writeFile(join(output,'result.json'),JSON.stringify(report,null,2));
   console.log(JSON.stringify(report));
-  await manager.close();window.destroy();app.exit(0);
+  await session.close();await manager.close();window.destroy();app.exit(0);
 }
 run().catch(async error=>{console.error(error);await writeFile(join(output,'failure.txt'),error.stack||String(error));if(window)await writeFile(join(output,'failure.png'),(await window.webContents.capturePage()).toPNG());await manager?.close();window?.destroy();app.exit(1);});

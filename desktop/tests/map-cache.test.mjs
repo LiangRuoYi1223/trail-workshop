@@ -57,6 +57,25 @@ test('corrupt cached bytes are replaced and user cache clearing stays inside nam
   await cache.clear(); assert.equal(await cacheDirectoryBytes(cacheDir),0); assert.equal(await readFile(join(root,'keep.txt'),'utf8'),'user file');
 });
 
+test('surface cache bytes are counted and clearing removes imagery without touching saved project or other sources', async t => {
+  const { root } = await fixture(t), surface = join(root, 'surface-cache'), crop = join(surface, 'crop-1');
+  await Promise.all([mkdir(crop, { recursive: true }), mkdir(join(root, 'elevation-cache')), mkdir(join(root, 'map-tiles'))]);
+  await Promise.all([writeFile(join(crop, 'rgb.bin'), Buffer.alloc(17)), writeFile(join(crop, 'metadata.json'), Buffer.alloc(31)),
+    writeFile(join(root, 'session-v1.json'), 'saved project'), writeFile(join(root, 'imported-image.tif'), 'user source'),
+    writeFile(join(root, 'elevation-cache/dem.bin'), Buffer.alloc(5)), writeFile(join(root, 'map-tiles/tile.png'), Buffer.alloc(7))]);
+  const info = async () => ({ imageBytes: await cacheDirectoryBytes(surface),
+    elevationBytes: await cacheDirectoryBytes(join(root, 'elevation-cache')), mapBytes: await cacheDirectoryBytes(join(root, 'map-tiles')) });
+  assert.deepEqual(await info(), { imageBytes: 48, elevationBytes: 5, mapBytes: 7 });
+  await clearOwnedCacheDirectory(root, 'surface-cache');
+  assert.deepEqual(await info(), { imageBytes: 0, elevationBytes: 5, mapBytes: 7 });
+  assert.deepEqual(await readdir(surface), []);
+  assert.equal(await readFile(join(root, 'session-v1.json'), 'utf8'), 'saved project');
+  assert.equal(await readFile(join(root, 'imported-image.tif'), 'utf8'), 'user source');
+  for (const name of ['surface-cache/../', '../surface-cache', 'surface-cache-copy', 'session-v1.json']) {
+    await assert.rejects(clearOwnedCacheDirectory(root, name), { code: 'CACHE_PATH_INVALID' });
+  }
+});
+
 test('redirected cache directory cannot be read, written, counted or cleared', async t => {
   const { root, cacheDir } = await fixture(t);
   const outside = join(root, 'outside-cache'); await mkdir(outside);

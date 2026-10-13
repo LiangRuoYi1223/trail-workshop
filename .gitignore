@@ -1,10 +1,48 @@
-/research/
-/node_modules/
+# Dependencies and builds
+node_modules/
 /dist/
-/outputs/
-/data/
-/.env
-/.env.*
 /desktop/dist/
 /desktop/release/
+
+# Generated models, imagery, caches and verification artifacts
 /artifacts/
+/outputs/
+/coverage/
+.cache/
+*.log
+*.tsbuildinfo
+*.stl
+*.3mf
+*.obj
+*.zip
+
+# Personal route and raster files
+*.gpx
+*.kml
+*.kmz
+*.tif
+*.tiff
+
+# Keep only the public fixtures required by tests and verification scripts
+/data/*
+!/data/copernicus-longquanshan.tif
+!/data/copernicus-longquanshan.source.json
+/fixtures/*
+!/fixtures/sample-trail.gpx
+!/fixtures/demo.json
+!/fixtures/stage2.json
+!/fixtures/opentopography.example.json
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+credentials*.json
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,38 @@
+{
+  "dataset": "Copernicus DEM GLO-30 Public, 2021 release; DSM, not bare-earth DTM",
+  "sourceUrl": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N30_00_E104_00_DEM/Copernicus_DSM_COG_10_N30_00_E104_00_DEM.tif",
+  "registry": "https://registry.opendata.aws/copernicus-dem/",
+  "attribution": "Copernicus Digital Elevation Model was accessed from https://registry.opendata.aws/copernicus-dem.",
+  "accessedAt": "2026-10-08T10:22:02.831Z",
+  "requestedBounds": {
+    "west": 104.255,
+    "south": 30.535,
+    "east": 104.325,
+    "north": 30.595
+  },
+  "sourceWindow": [
+    915,
+    1456,
+    1174,
+    1677
+  ],
+  "metadata": {
+    "width": 259,
+    "height": 221,
+    "bounds": {
+      "west": 104.25416666666666,
+      "north": 30.595555555555556,
+      "east": 104.32583333333334,
+      "south": 30.534444444444446
+    },
+    "crs": "EPSG:4326",
+    "pixelIsArea": false,
+    "elevationUnit": "m",
+    "unitSource": "GeoKey",
+    "validPixels": 57239,
+    "missingPixels": 0,
+    "warnings": []
+  },
+  "sha256": "a555cd197cadb05d3ae5cfba91fe516b84170cb7e516d844e0316a0727e52489",
+  "track": "Unmodified TrailPrint upstream example; sample route, not a user-recorded hike"
+}

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { createDesktopManager } from '../main/manager.mjs';
 import { createSessionStore } from '../main/session.mjs';
+import { saveModelFile } from '../main/save-model.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const output=join(root,'artifacts','route-style-check');
 mkdirSync(output,{recursive:true});
@@ -18,22 +19,25 @@ const errors=[];
 async function run() {
   await app.whenReady();
   protocol.handle('terrain-map',()=>new Response(null,{status:404}));
-  let savedOptions,lastInspection,lastJob;
+  let savedOptions,lastInspection,lastJob,saved;
   manager=createDesktopManager({taskRoot:join(output,'tasks'),coreModuleUrl:pathToFileURL(join(root,'dist/src/index.js')).href,
     workerFactory:({workerPath,taskDir})=>utilityProcess.fork(workerPath,[],{cwd:taskDir,stdio:'pipe'}),
     onJob:job=>{lastJob=job;window?.webContents.send('terrain:job',job);} });
   const session=createSessionStore({userDataDirectory:app.getPath('userData'),manager});
   const handle=(name,fn)=>ipcMain.handle(`terrain:${name}`,async(_event,...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:{code:error.code||'TEST',message:error.message}};}});
-  handle('runtime',()=>({version:'0.3.5',platform:'win32',packaged:false,units:'mm'}));
+  handle('runtime',()=>({version:'0.4.0',platform:'win32',packaged:false,units:'mm'}));
   handle('cache-info',()=>({path:output,elevationBytes:0,mapBytes:0}));
   handle('session-get',()=>session.getSession());
   handle('session-save',request=>{savedOptions=request.options;return session.saveSession(request);});
   handle('session-restore',()=>session.restoreSession());
-  handle('sample',async()=>({route:await manager.addRoute(join(root,'fixtures/sample-trail.gpx'),{isSample:true}),
-    dem:await manager.addDem(join(root,'data/copernicus-longquanshan.tif'),{isSample:true})}));
+  handle('choose-route',()=>manager.addRoute(join(root,'fixtures/sample-trail.gpx')));
+  handle('choose-dem',()=>manager.addDem(join(root,'data/copernicus-longquanshan.tif')));
   handle('inspect',async request=>{lastInspection=await manager.inspect(request);return lastInspection;});
   handle('start',request=>manager.start(request));handle('get',id=>manager.get(id));handle('preview',id=>manager.preview(id));
   handle('cancel',id=>manager.cancel(id));
+  handle('save-model',async request=>{const artifact=await manager.exportModel(request.id,request.format,request.options);
+    saved=await saveModelFile(artifact.bytes,join(output,`路线样式_验证模型${artifact.extension}`),{overwriteApproved:true});
+    return{cancelled:false,...saved,appearanceHash:artifact.appearanceHash};});
   window=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{preload:join(root,'desktop/main/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
   window.webContents.on('console-message',event=>{if(event.level==='error'&&!event.message.includes('terrain-map')){errors.push(event.message);console.error(event.message);}});
   await window.loadFile(join(root,'desktop/dist/renderer/index.html'));
@@ -66,15 +70,24 @@ async function run() {
     window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:Math.round(point.x+x*82),y:Math.round(point.y+y*82)});
     window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(point.x+x*82),y:Math.round(point.y+y*82)});
   };
-  await wait(()=>js(`!document.querySelector('.sample-button').disabled`),'startup');
-  await click('打开龙泉山示例');
-  await wait(()=>lastInspection&&js(`!document.querySelector('.map-actions button').disabled`),'sample framing');
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='导入路线'&&!el.disabled)`),'startup');
+  await js(`const imageMode=document.querySelector('#image-mode');imageMode.value='local';imageMode.dispatchEvent(new Event('change',{bubbles:true}));`);
+  assert.equal(await js(`'loadSample' in window.terrain`),false,'example API is still exposed');
+  assert.equal(await js(`document.body.textContent.includes('龙泉山')`),false,'example is still visible');
+  await js(`const format=document.querySelector('#export-format');format.value='stl';format.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await click('导入路线');
+  await wait(()=>lastInspection&&js(`![...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='local')).disabled`),'route import');
+  await js(`const mode=[...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='local'));mode.value='local';mode.dispatchEvent(new Event('change',{bubbles:true}));`);
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='选择高程'&&!el.disabled)`),'local elevation mode');
+  await click('选择高程');
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='生成模型'&&!el.disabled)`),'elevation import');
   await js(`document.querySelector('.map-basemap input').click();document.querySelector('.route-style-section').scrollIntoView({block:'center'});`);
   await rgb(255,0,0);
   await wait(()=>savedOptions.routeColor==='#ff0000','RGB red');
   assert.equal(await js(`document.querySelector('.leaflet-overlay-pane path').getAttribute('stroke')`),'#ff0000');
   assert.deepEqual(await js(`[...document.querySelectorAll('.rgb-field output')].map(el=>el.textContent)`),['100.0%','0.0%','0.0%']);
-  await wheelClick(0,-1);
+  // Keep the click inside the wheel when fractional layout coordinates round.
+  await wheelClick(0,-.9);
   await wait(()=>savedOptions.routeColor!=='#ff0000','wheel click changes hue');
   const picked=savedOptions.routeColor;
   const wheelCenter=await position('.color-wheel');
@@ -112,11 +125,15 @@ async function run() {
   assert.equal(preview.report.integratedModel.route.heightMm,2.4);assert.equal(preview.report.integratedModel.route.widthMm,2.5);
   assert.equal(preview.report.validation.connectedComponents,1);assert.equal(preview.report.validation.boundaryEdges,0);
   const jobId=lastJob.id,stlHash=lastJob.result.stlSha256;
+  await wait(()=>js(`[...document.querySelectorAll('button')].some(el=>el.textContent==='保存 STL'&&!el.disabled)`),'STL export ready');
+  await click('保存 STL');await wait(()=>saved&&js(`!!document.querySelector('.saved-path')`),'style STL saved');
+  assert.equal(saved.sha256,stlHash);
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await capture('03-blue-model');
   const canvasBox=await js(`(()=>{const b=document.querySelector('.terrain-canvas canvas').getBoundingClientRect();return{x:Math.round(b.x),y:Math.round(b.y),width:Math.round(b.width),height:Math.round(b.height)};})()`);
   const blueCapture=await window.webContents.capturePage(canvasBox),bluePixels=blueCapture.toPNG();
   await rgb(255,0,0);
   await wait(()=>savedOptions.routeColor==='#ff0000','preview red');await delay(200);
+  assert.equal(await js(`!!document.querySelector('.saved-path')`),false,'color edit leaves an old saved confirmation');
   let redPixels;
   await wait(async()=>{redPixels=(await window.webContents.capturePage(canvasBox)).toPNG();return !bluePixels.equals(redPixels);},'3D canvas repaint after color edit');
   await writeFile(join(output,'blue-canvas.png'),bluePixels);await writeFile(join(output,'red-canvas.png'),redPixels);
@@ -133,7 +150,7 @@ async function run() {
   const restored=await reopened.getSession();
   assert.equal(restored.preferences.options.routeColor,'#ff0000');assert.equal(restored.preferences.options.routeWidthMm,2.5);assert.equal(restored.preferences.options.routeHeightMm,1.5);
   await reopened.close();
-  const report={passed:true,colorWheel:true,rgb:true,brightness:true,keyboard:true,widthMm:2.5,generatedHeightMm:2.4,restoredHeightMm:1.5,colorUpdates3D:true,colorKeepsStl:true,validation:preview.report.validation,errors};
+  const report={passed:true,colorWheel:true,rgb:true,brightness:true,keyboard:true,widthMm:2.5,generatedHeightMm:2.4,restoredHeightMm:1.5,colorUpdates3D:true,colorKeepsStl:true,colorClearsSavedConfirmation:true,saved,validation:preview.report.validation,errors};
   await writeFile(join(output,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
   await manager.close();window.destroy();app.exit(0);
 }

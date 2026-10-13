@@ -8,7 +8,7 @@
 
 阶段 1 自查后，普通矩形保留原规则网格，圆形／圆角／多边形改为原 XY 三角网格裁剪及闭合侧壁，不再使用同心环重采样；圆角工具补齐切点并去除重复连接点。新增的 `clipped-heightfield.ts`、采样依赖域、DEM provider 与输出发布逻辑为本项目实现；仍保留所使用上游轮廓、裁剪基础工具的 MIT 许可。
 
-真实 DEM 验收夹具来自 [Copernicus GLO-30 公共数据](https://registry.opendata.aws/copernicus-dem/)，为 DSM（包含植被和建筑等地表对象），并非裸地 DTM。下载脚本记录来源、裁剪位置和 SHA-256。该数据并非本项目原创；阶段 3.1 桌面包附带这一小范围裁剪样例，来源和分发说明见下文。
+真实 DEM 验收夹具来自 [Copernicus GLO-30 公共数据](https://registry.opendata.aws/copernicus-dem/)，为 DSM（包含植被和建筑等地表对象），并非裸地 DTM。下载脚本记录来源、裁剪位置和 SHA-256。该数据并非本项目原创；v0.3.6 起仅保留在开发目录用于自动验证，不再随桌面包分发，来源和许可说明见下文。
 
 阶段 2 新增的固定依赖：
 
@@ -38,10 +38,16 @@ Electron 分发目录根部原有 `LICENSE`、`LICENSES.chromium.html` 也必须
 
 阶段 3.2 在线底图使用 OpenStreetMap 标准瓦片，仅加载当前地图视口。窗口显示可点击的 © OpenStreetMap 署名；本机缓存遵守响应有效期，无期限时保留至少七天，过期请求支持条件验证，不预下载离线瓦片包。[版权说明](https://www.openstreetmap.org/copyright)、[瓦片使用政策](https://operations.osmfoundation.org/policies/tiles/)。高程缓存独立于底图，离线高程不等于离线底图。
 
-## 随包 Copernicus GLO-30 裁剪样例
+## 开发验收用 Copernicus GLO-30 裁剪夹具
 
-数据：`data/copernicus-longquanshan.tif`，桌面包中为 `resources/app/fixtures/copernicus-longquanshan.tif`；其原始来源记录 `.source.json` 同时保留。源数据是 AWS 公共镜像中的 Copernicus GLO-30 Public／2021 release；本项目仅提取龙泉山附近窗口并重编码为本地 GeoTIFF，保留高程值，不作为全球完整数据或裸地 DTM 发布。[AWS 数据登记](https://registry.opendata.aws/copernicus-dem/)、[镜像数据处理说明](https://copernicus-dem-30m.s3.amazonaws.com/readme.html)。
+开发目录数据：`data/copernicus-longquanshan.tif`；其原始来源记录 `.source.json` 同时保留。v0.3.6 桌面包不含这些文件或示例 GPX。源数据是 AWS 公共镜像中的 Copernicus GLO-30 Public／2021 release；本项目仅提取龙泉山附近窗口并重编码为本地 GeoTIFF，保留高程值，不作为全球完整数据或裸地 DTM 发布。[AWS 数据登记](https://registry.opendata.aws/copernicus-dem/)、[镜像数据处理说明](https://copernicus-dem-30m.s3.amazonaws.com/readme.html)。
 
-GLO-30 的免费公开许可允许复制、分发、修改和与其他数据组合，分发／公开传播时须履行来源说明等条款。本项目依正式许可 Article 6，为裁剪样例附带衍生数据署名及指定责任说明；全文位于 `desktop/licenses/Copernicus-GLO30-SAMPLE.md`，完整官方许可证位于 `desktop/licenses/Copernicus-GLO30-LICENSE.pdf`。这两份文件必须与样例一起打包。[官方许可与署名说明](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM)、[正式 GLO-30 许可 PDF](https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf)。
+GLO-30 的免费公开许可允许复制、分发、修改和与其他数据组合，分发／公开传播时须履行来源说明等条款。本项目依正式许可 Article 6，为开发裁剪夹具保留衍生数据署名及指定责任说明；全文位于开发目录 `desktop/licenses/Copernicus-GLO30-SAMPLE.md`，完整官方许可证位于 `desktop/licenses/Copernicus-GLO30-LICENSE.pdf`。完整许可证继续随桌面软件提供；若另行分发夹具，应同时提供其来源和署名文件。[官方许可与署名说明](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM)、[正式 GLO-30 许可 PDF](https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf)。
 
 样例 GPX 仍受上文 TrailPrint-3D 的 MIT 许可覆盖，名称与路线为上游示例，不表示软件用户本人走过该路线。公开分享由该示例高程生成的模型时，应在发布说明中继续提供上述来源和许可说明；默认“保存 STL”仍只写一个打印文件。
+
+## v0.4.1 自动地表影像
+
+自动影像使用公开 Sentinel-2 Level-2A Collection 1 真彩色 COG 与场景分类，通过 Element 84 Earth Search 公共目录和 AWS 公共镜像按取景读取。来源：[AWS 数据登记](https://registry.opendata.aws/sentinel-2-l2a-cogs/)、[Earth Search 集合说明](https://github.com/Element84/earth-search/blob/main/docs/collections/sentinel-2-l2a.md)。这些卫星数据不随软件包预装。
+
+软件对影像裁剪、云筛选、组合和代表色分类，自动获取记录及彩色模型导出记录携带实际影像年份的署名：“Contains modified Copernicus Sentinel data [Year]”。数据许可及署名规则见 [Copernicus Sentinel Data Legal Notice](https://sentinels.copernicus.eu/documents/247904/690755/Sentinel_Data_Legal_Notice) 与 [官方说明](https://documentation.dataspace.copernicus.eu/FAQ.html)。打包说明保存在 `desktop/licenses/Sentinel-2-DATA-NOTICE.md`。
