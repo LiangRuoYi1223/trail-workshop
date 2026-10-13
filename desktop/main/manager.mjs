@@ -355,12 +355,12 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
           else { try { child.kill(); } catch { /* Wait for the real exit event. */ } }
         }
         else {
-          // Preview color belongs to the saved project, not the STL geometry.
-          const { routeColor, grassColor, rockColor, maxColors, ...geometryOptions } = validated;
+          // Preview classification and color belong to the project settings.
+          const { routeColor, grassColor, rockColor, maxColors, grassSensitivity, grassContinuity, ...geometryOptions } = validated;
           child.postMessage({ type: 'generate', jobId: id, gpxXml: route.xml, fileName: route.info.fileName, demMode: mode,
             ...(mode === 'local' ? { demPath: dem.path, demSha256: dem.source.sha256, demSourcePath: dem.sourcePath } : { demCacheDir: cacheDir, offlineOnly }),
             imageMode, imageLookbackMonths, ...(imageMode === 'auto' ? { imageCacheDir: surfaceCacheDir, imageOfflineOnly } : {}),
-            ...(image ? { imagePath: image.path, imageSha256: image.source.sha256 } : {}), appearanceOptions: appearanceOptions(validated),
+            ...(image ? { imagePath: image.path, imageSha256: image.source.sha256 } : {}), appearanceOptions: appearanceOptions(validated), grassSensitivity, grassContinuity,
             bounds, options: Object.freeze(geometryOptions), taskDir: job.taskDir, coreModuleUrl });
         }
       } catch (error) {

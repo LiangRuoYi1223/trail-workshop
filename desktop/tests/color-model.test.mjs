@@ -28,18 +28,18 @@ function zipEntries(bytes) {
   }
   return files;
 }
-function rgbTiff() {
-  const pixels = Uint8Array.from(Array.from({ length: 8 * 8 }, (_, i) => i % 8 < 4 ? [30, 160, 40] : [150, 145, 140]).flat());
+function rgbTiff(rgb) {
+  const pixels = Uint8Array.from(Array.from({ length: 8 * 8 }, (_, i) => rgb ?? (i % 8 < 4 ? [30, 160, 40] : [150, 145, 140])).flat());
   return Buffer.from(writeArrayBuffer(pixels, { width: 8, height: 8, SamplesPerPixel: 3,
     BitsPerSample: [8, 8, 8], SampleFormat: [1, 1, 1], PhotometricInterpretation: 2,
     ModelPixelScale: [0.02, 0.02, 0], ModelTiepoint: [0, 0, 0, 104.20, 30.65, 0],
     GeographicTypeGeoKey: 4326, GTModelTypeGeoKey: 2, GTRasterTypeGeoKey: 1 }));
 }
-async function fixture(t) {
+async function fixture(t, { rgb } = {}) {
   await fs.mkdir(parent, { recursive: true });
   const root = await fs.mkdtemp(join(parent, 'case-')), profile = join(root, 'profile');
   const routePath = join(root, '路线.gpx'), imagePath = join(root, '地表.tif');
-  await Promise.all([fs.mkdir(profile), fs.writeFile(routePath, gpx), fs.writeFile(imagePath, rgbTiff())]);
+  await Promise.all([fs.mkdir(profile), fs.writeFile(routePath, gpx), fs.writeFile(imagePath, rgbTiff(rgb))]);
   const managers = [], stores = [], workers = [];
   const fresh = () => {
     const manager = createDesktopManager({ taskRoot: join(root, `tasks-${managers.length}`), coreModuleUrl,
@@ -127,6 +127,51 @@ test('real worker classifies image once and export uses current colors without c
   assert.equal(digest(stl.bytes), artifact.stlSha256);
   await assert.rejects(f.manager.exportModel(job.id, '../stl', colorOptions), { code: 'CONFIG_INVALID' });
   await assert.rejects(f.manager.exportModel(job.id, '3mf', { ...colorOptions, maxColors: 5 }), { code: 'CONFIG_INVALID' });
+});
+
+test('real snow worker applies grass sensitivity to preview and closed material volumes without changing geometry', async t => {
+  const f = await fixture(t, { rgb: [95, 105, 98] }), image = await f.manager.addImage(f.imagePath);
+  const colors = { ...colorOptions, maxColors: 4 }, previews = [];
+  for (const [grassSensitivity, expectedTerrainClass] of [[50, 'rock'], [100, 'grass']]) {
+    const job = await f.manager.start({ ...f.request, imageId: image.id, options: {
+      ...f.request.options, ...colors, grassSensitivity, snowEnabled: true, snowCoveragePercent: 30, snowMaxThicknessMm: 1,
+    } });
+    await settled(f.manager, job.id);
+    const preview = await f.manager.preview(job.id); previews.push(preview);
+    const terrainClasses = preview.appearance.faceClasses.filter((_, face) => preview.mesh.faceKinds[face] === 'terrain');
+    assert.ok(terrainClasses.length > 0);
+    assert.ok(terrainClasses.every(kind => kind === expectedTerrainClass));
+    assert.equal(preview.report.config.grassSensitivity, undefined, 'classification settings must stay outside geometry config');
+    for (const part of preview.mesh.materialParts) {
+      assert.equal(part.faceClasses.length, part.indices.length / 3);
+      if (part.id !== 'terrain') assert.ok(part.faceClasses.every(kind => kind === part.id));
+      else {
+        const classes = part.faceClasses.filter((_, face) => part.faceKinds[face] === 'terrain');
+        assert.ok(classes.length > 0); assert.ok(classes.every(kind => kind === expectedTerrainClass));
+      }
+    }
+    for (const [format, manifestPath] of [['3mf', 'Metadata/manifest.json'], ['obj', 'manifest.json']]) {
+      const exported = await f.manager.exportModel(job.id, format, { ...colors, grassSensitivity: 0 });
+      const files = zipEntries(exported.bytes), manifest = JSON.parse(files.get(manifestPath).toString('utf8'));
+      assert.equal(exported.appearanceHash, preview.appearance.hash, 'export must use the generated classification');
+      assert.equal(manifest.appearance.hash, preview.appearance.hash);
+      assert.equal(manifest.appearance.options.grassSensitivity, undefined);
+      if (format === 'obj') {
+        const materialClasses = new Map(manifest.appearance.palette.map((entry, index) => [`palette_${index}`, entry.id]));
+        const objectFaces = new Map(); let object, material;
+        for (const line of files.get('model.obj').toString('utf8').split('\n')) {
+          if (line.startsWith('o ')) { object = line.slice(2); objectFaces.set(object, []); }
+          else if (line.startsWith('usemtl ')) material = materialClasses.get(line.slice(7));
+          else if (line.startsWith('f ')) objectFaces.get(object).push(material);
+        }
+        for (const part of preview.mesh.materialParts) assert.deepEqual(objectFaces.get(part.id), part.faceClasses);
+      }
+    }
+    assert.deepEqual((await f.manager.preview(job.id)).appearance, preview.appearance);
+  }
+  assert.deepEqual(previews[0].mesh.positions, previews[1].mesh.positions);
+  assert.deepEqual(previews[0].mesh.indices, previews[1].mesh.indices);
+  assert.notEqual(previews[0].appearance.hash, previews[1].appearance.hash);
 });
 
 test('worker refuses a previously imported image whose bytes changed before generation', async t => {

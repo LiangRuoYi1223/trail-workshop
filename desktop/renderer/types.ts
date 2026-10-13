@@ -7,6 +7,7 @@ export interface ModelOptions {
   zExaggeration: number; gridColumns: number; smoothing: 'raw' | 'light' | 'medium' | 'heavy';
   routeWidthMm: number; routeHeightMm: number; routeColor: string; frameWidthMm: number;
   maxColors:2|3|4; grassColor:string; rockColor:string;
+  grassSensitivity?: number; grassContinuity?: number;
   snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
   center?: GeoPoint; groundWidthM?: number;
 }

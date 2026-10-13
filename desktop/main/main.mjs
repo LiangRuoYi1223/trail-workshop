@@ -11,7 +11,7 @@ import { saveModelFile, assertPermanentSaveTarget } from './save-model.mjs';
 import { cacheDirectoryBytes, clearOwnedCacheDirectory, createMapCache } from './map-cache.mjs';
 import { createSessionStore } from './session.mjs';
 
-const VERSION = '0.4.3';
+const VERSION = '0.4.7';
 const developmentRoot = fileURLToPath(new URL('../../', import.meta.url));
 const argument = name => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 const dataDirectory = argument('data-dir');

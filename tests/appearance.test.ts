@@ -32,6 +32,81 @@ test('RGB greenness requires meaningful green dominance rather than a one-level 
   assert.equal(appearance.source?.sha256, metadata.sha256);
 });
 
+test('grass sensitivity contracts and expands marginal green and yellow-green terrain monotonically', () => {
+  const pixels = [{r:50,g:140,b:60}, {r:70,g:90,b:72}, {r:110,g:122,b:70}, {r:5,g:20,b:5}];
+  const terrain = mesh(pixels.map(() => 'terrain'));
+  const expected: Array<[number, FaceClass[]]> = [
+    [0, ['grass','rock','rock','rock']],
+    [50, ['grass','grass','rock','rock']],
+    [100, ['grass','grass','grass','grass']],
+  ];
+  for (const [sensitivity, classes] of expected) {
+    let cursor = 0;
+    const appearance = buildModelAppearance(terrain, selection, options, image(() => pixels[cursor++]), sensitivity);
+    assert.deepEqual(appearance.faceClasses, classes, `sensitivity ${sensitivity}`);
+    validateModelAppearance(appearance, pixels.length);
+  }
+  let previous: FaceClass[] = pixels.map(() => 'rock');
+  for (let sensitivity=0;sensitivity<=100;sensitivity++) {
+    let cursor = 0;
+    const current = buildModelAppearance(terrain, selection, options, image(() => pixels[cursor++]), sensitivity).faceClasses;
+    current.forEach((kind,index) => { if(previous[index]==='grass') assert.equal(kind,'grass'); });
+    previous = current;
+  }
+});
+
+test('default grass sensitivity preserves the existing RGB boundary decisions and appearance identity', () => {
+  const pixels = [{r:20,g:40,b:20}, {r:20,g:39,b:20}, {r:85,g:100,b:85}, {r:86,g:100,b:85},
+    {r:80,g:100,b:90}, {r:80,g:100,b:91}, {r:200,g:230,b:200}, {r:201,g:230,b:200},
+    {r:180,g:220,b:200}, {r:180,g:219,b:200}];
+  const terrain = mesh(pixels.map(() => 'terrain'));
+  const source = () => { let cursor=0; return image(() => pixels[cursor++]); };
+  const implicit = buildModelAppearance(terrain,selection,options,source());
+  const explicit = buildModelAppearance(terrain,selection,options,source(),50);
+  assert.deepEqual(explicit.faceClasses,['grass','rock','grass','rock','grass','rock','grass','rock','rock','rock']);
+  assert.deepEqual(explicit,implicit);
+});
+
+test('even broad grass sensitivity protects neutral gray, white, blue and red pixels', () => {
+  const pixels = [{r:180,g:180,b:180}, {r:255,g:255,b:255}, {r:0,g:80,b:220},
+    {r:220,g:80,b:0}, {r:90,g:90,b:0}, {r:1,g:2,b:1}];
+  const terrain = mesh(pixels.map(() => 'terrain'));
+  for(const sensitivity of [0,50,100]) {
+    let cursor=0;
+    const appearance=buildModelAppearance(terrain,selection,options,image(() => pixels[cursor++]),sensitivity);
+    assert.deepEqual(appearance.faceClasses,pixels.map(() => 'rock'));
+  }
+});
+
+test('grass sensitivity preserves snow, route and structural faces without sampling their imagery', () => {
+  const kinds: NonNullable<AppearanceMesh['faceKinds']> = ['route','route-wall','snow','snow-wall','frame','wall','bottom'];
+  const terrain=mesh(kinds), before=structuredClone(terrain);
+  for(const sensitivity of [0,100]) {
+    const appearance=buildModelAppearance(terrain,selection,{...options,maxColors:4},
+      image(() => { throw new Error('protected face sampled imagery'); }),sensitivity);
+    assert.deepEqual(appearance.faceClasses,['route','route','snow','snow','rock','rock','rock']);
+    assert.deepEqual(appearance.faceMaterials.slice(2,4).map(index => appearance.palette[index].color),['#ffffff','#ffffff']);
+    assert.deepEqual(terrain,before);
+  }
+});
+
+test('grass sensitivity leaves uniform terrain and input geometry unchanged without an image', () => {
+  const terrain=mesh(['terrain','route','wall']), before=structuredClone(terrain);
+  const baseline=buildModelAppearance(terrain,selection,options);
+  for(const sensitivity of [0,25.5,50,100]) {
+    assert.deepEqual(buildModelAppearance(terrain,selection,options,undefined,sensitivity),baseline);
+    assert.deepEqual(terrain,before);
+  }
+});
+
+test('grass sensitivity rejects non-numeric, nonfinite and out-of-range settings before sampling', () => {
+  for(const sensitivity of [NaN,Infinity,-Infinity,-1,101,'50',null,true,{},[]]) {
+    assert.throws(() => buildModelAppearance(mesh(['terrain']),selection,options,
+      image(() => { throw new Error('invalid sensitivity sampled imagery'); }),sensitivity as number),
+      {name:'AppearanceError',code:'APPEARANCE_OPTIONS_INVALID'});
+  }
+});
+
 test('sampling undoes rotation and fixed-latitude ground scale at a face centroid', () => {
   let sampled: {lat:number;lon:number} | undefined;
   buildModelAppearance(mesh(['terrain']), selection, options, image((lat,lon) => {

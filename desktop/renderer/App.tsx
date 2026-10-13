@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import RouteMap from './components/RouteMap';
 import TerrainView from './components/TerrainView';
 import RouteColorPicker from './components/RouteColorPicker';
+import SupportAuthorButton from './components/SupportAuthorButton';
 import { geometryOptions, printPaletteCount } from './route-color';
 import { acquisitionRows, elapsedLabel, failurePresentation, idleStatus, phaseLabel } from './job-progress';
 import type { CacheInfo, DemInfo, ImageInfo, ImageMode, SurfaceImageSource, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
@@ -11,6 +12,7 @@ const DEFAULTS: ModelOptions = {
   bearingDeg: 0, paddingFraction: .1, baseThicknessMm: 2, zExaggeration: 2,
   gridColumns: 129, smoothing: 'raw', routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
   maxColors:3,grassColor:'#799278',rockColor:'#a9aa92',
+  grassSensitivity:50,grassContinuity:50,
   snowEnabled:false,snowCoveragePercent:30,snowMaxThicknessMm:1,
 };
 const api = window.terrain;
@@ -43,6 +45,10 @@ function validate(options: ModelOptions): string {
   if (!/^#[\da-f]{6}$/i.test(options.routeColor)) return '请选择有效的路线颜色。';
   if (!/^#[\da-f]{6}$/i.test(options.grassColor) || !/^#[\da-f]{6}$/i.test(options.rockColor)) return '请选择有效的山体颜色。';
   if (![2,3,4].includes(options.maxColors)) return '打印颜色上限请选择两色、三色或四色。';
+  const grassSensitivity = options.grassSensitivity === undefined ? 50 : options.grassSensitivity;
+  if (typeof grassSensitivity !== 'number' || !Number.isFinite(grassSensitivity) || grassSensitivity < 0 || grassSensitivity > 100) return '草地识别强度需在 0–100 之间。';
+  const grassContinuity = options.grassContinuity === undefined ? 50 : options.grassContinuity;
+  if (typeof grassContinuity !== 'number' || !Number.isFinite(grassContinuity) || grassContinuity < 0 || grassContinuity > 100) return '草地连片程度需在 0–100 之间。';
   if (options.snowEnabled !== undefined && typeof options.snowEnabled !== 'boolean') return '请选择有效的积雪开关状态。';
   const snowCoverage = options.snowCoveragePercent === undefined ? 30 : options.snowCoveragePercent;
   const snowThickness = options.snowMaxThicknessMm === undefined ? 1 : options.snowMaxThicknessMm;
@@ -298,9 +304,19 @@ export default function App() {
   const saveLabel=exportFormat==='3mf'?'保存彩色 3MF':exportFormat==='obj'?'保存 OBJ 包':'保存 STL';
   const center = options.center || inspection?.selection.center;
   const snowReport = preview?.report.snow;
+  const grassSensitivity = options.grassSensitivity ?? 50;
+  const grassContinuity = options.grassContinuity ?? 50;
+  const grassRecognitionDisabled = controlsLocked || imageMode === 'none' || (imageMode === 'local' && !image) || options.maxColors === 2;
+  const grassUnavailableHint = imageMode === 'none' ? '使用地表影像后可调整草地识别与连片。'
+    : imageMode === 'local' && !image ? '导入地表影像后可调整草地识别与连片。'
+    : options.maxColors === 2 ? '选择三色或四色后可区分草地与山石。' : '';
+  const grassRecognitionHint = grassUnavailableHint || '草地偏少时向右调，偏多时向左调；调整后重新生成模型。50 为默认强度，数值不代表实际覆盖率。';
+  const grassContinuityHint = grassUnavailableHint || '补齐草地间的小块山石和短缝，保留大片山石；0 关闭连片，50 为默认。调整后重新生成模型。';
 
   return <div className={`app-shell${dragging ? ' is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = !controlsLocked && event.dataTransfer.types.includes('Files') ? 'copy' : 'none'; }} onDragEnter={event => { event.preventDefault(); if (!controlsLocked && event.dataTransfer.types.includes('Files')) { dragDepth.current++; setDragging(true); } }} onDragLeave={event => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current || event.relatedTarget === null && (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight)) { dragDepth.current = 0; setDragging(false); } }} onDrop={event => { event.preventDefault(); dragDepth.current = 0; setDragging(false); if (!controlsLocked && event.dataTransfer.types.includes('Files')) void importDropped(Array.from(event.dataTransfer.files)); }}>
-    <header className="app-header"><div className="app-brand"><MountainMark /><div><h1>徒步地形工坊</h1><p>把走过的路，制作成一座地形</p></div></div><div className="header-meta">独立桌面版{runtime ? ` · ${runtime.version}` : ''}<span>输出单位：毫米</span></div></header>
+    <header className="app-header"><div className="app-brand"><MountainMark /><div><h1>徒步地形工坊</h1><p>把走过的路，制作成一座地形</p></div></div>
+      <div className="header-actions"><SupportAuthorButton /><div className="header-meta">独立桌面版{runtime ? ` · ${runtime.version}` : ''}<span>输出单位：毫米</span></div></div>
+    </header>
     {!api && <div className="bridge-warning" role="alert">当前为界面预览。文件导入、模型生成和保存请在桌面软件中使用。</div>}
     <main className="app-main">
       <aside className="sidebar" aria-label="路线与模型设置">
@@ -317,6 +333,20 @@ export default function App() {
           {image?<div className="file-detail image-detail"><strong title={image.fileName}>{image.fileName}</strong><p>{image.width} × {image.height} 像素 · {image.crs}</p><button onClick={clearImage} disabled={controlsLocked}>清除地表影像</button></div>:<p className="field-hint">导入或拖入此区域 · RGB 地表影像 · 最大 64 MB。未导入时山体统一配色。</p>}</>}
           {imageMode !== 'none' && <p className="field-hint">依据影像颜色将绿色区域与非植被区域归并为草地、山石代表色；这是颜色归类，无法准确识别地物。地图底图仅供取景。</p>}
           <label className="select-field" htmlFor="print-colors">打印颜色上限<select id="print-colors" value={options.maxColors} disabled={controlsLocked} onChange={event=>update('maxColors',Number(event.currentTarget.value) as 2|3|4)}><option value="4">四色 · 草地、山石、白雪、路线</option><option value="3" disabled={options.snowEnabled}>三色 · 草地、山石、路线</option><option value="2" disabled={options.snowEnabled}>两色 · 山体、路线</option></select></label>
+          <div className="grass-sensitivity-field">
+            <div className="grass-sensitivity-header"><label htmlFor="grass-sensitivity">草地识别强度</label><output htmlFor="grass-sensitivity">{grassSensitivity} / 100</output></div>
+            <input id="grass-sensitivity" type="range" min={0} max={100} step={1} value={grassSensitivity} disabled={grassRecognitionDisabled} aria-describedby="grass-sensitivity-hint" aria-valuetext={`${grassSensitivity} / 100${grassSensitivity === 50 ? '，默认强度' : ''}`} onChange={event=>update('grassSensitivity',Number(event.currentTarget.value))} />
+            <div className="grass-sensitivity-scale" aria-hidden="true"><span>减少草地</span><span>增加草地</span></div>
+            <p id="grass-sensitivity-hint" className="field-hint">{grassRecognitionHint}</p>
+            <button className="grass-sensitivity-reset" disabled={grassRecognitionDisabled || grassSensitivity === 50} onClick={()=>update('grassSensitivity',50)}>恢复默认识别</button>
+          </div>
+          <div className="grass-sensitivity-field grass-continuity-field">
+            <div className="grass-sensitivity-header"><label htmlFor="grass-continuity">草地连片程度</label><output htmlFor="grass-continuity">{grassContinuity} / 100</output></div>
+            <input id="grass-continuity" type="range" min={0} max={100} step={1} value={grassContinuity} disabled={grassRecognitionDisabled} aria-describedby="grass-continuity-hint" aria-valuetext={`${grassContinuity} / 100${grassContinuity === 0 ? '，关闭连片' : grassContinuity === 50 ? '，默认连片程度' : ''}`} onChange={event=>update('grassContinuity',Number(event.currentTarget.value))} />
+            <div className="grass-sensitivity-scale" aria-hidden="true"><span>保留山石细节</span><span>增加连片</span></div>
+            <p id="grass-continuity-hint" className="field-hint">{grassContinuityHint}</p>
+            <button className="grass-sensitivity-reset" disabled={grassRecognitionDisabled || grassContinuity === 50} onClick={()=>update('grassContinuity',50)}>恢复默认连片</button>
+          </div>
           <div className="terrain-color-fields"><label htmlFor="grass-color">{options.maxColors===2?'山体颜色':'草地颜色'}<input id="grass-color" type="color" value={options.grassColor} disabled={controlsLocked} onChange={event=>update('grassColor',event.currentTarget.value)} /></label><label htmlFor="rock-color">山石颜色<input id="rock-color" type="color" value={options.rockColor} disabled={controlsLocked||options.maxColors===2} onChange={event=>update('rockColor',event.currentTarget.value)} /></label></div>
           {options.maxColors===4 && <div className="snow-color-field"><span>白雪颜色</span><span><i className="snow-color-swatch" aria-hidden="true" />固定白色 · #ffffff</span></div>}
           <p className="field-hint">底座、边框与侧墙沿用山石色；两色时沿用山体色。</p>

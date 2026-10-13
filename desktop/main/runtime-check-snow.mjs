@@ -23,7 +23,7 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
   const output = resolve(destination); await mkdir(output, {recursive:true});
   const runtime = {packaged:app.isPackaged, version:app.getVersion(), applicationRoot:app.getAppPath(), platform:process.platform};
   try {
-    assert.equal(runtime.packaged, true); assert.equal(runtime.version, '0.4.3');
+    assert.equal(runtime.packaged, true); assert.equal(runtime.version, '0.4.7');
     const core = await import(pathToFileURL(join(app.getAppPath(), 'core/index.js')).href);
     const route = await manager.addRoute(resolve(routePath)), dem = await manager.addDem(resolve(demPath));
     const image = imagePath ? await manager.addImage(resolve(imagePath)) : undefined;

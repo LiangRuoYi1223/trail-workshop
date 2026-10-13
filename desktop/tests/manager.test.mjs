@@ -379,6 +379,44 @@ test('route appearance defaults preserve the existing relief and stay outside wo
   assert.ok(Object.isFrozen(f.children[0].request.options));
 });
 
+test('grass sensitivity is dispatched separately from geometry and palette options', async t => {
+  const f = await fixture(t);
+  for (const grassSensitivity of [50, 72.5]) {
+    const job = await f.start(grassSensitivity === 50 ? {} : { grassSensitivity });
+    const worker = f.children.at(-1);
+    assert.equal(job.options.grassSensitivity, grassSensitivity);
+    assert.equal(worker.request.grassSensitivity, grassSensitivity);
+    assert.equal(worker.request.options.grassSensitivity, undefined);
+    assert.deepEqual(worker.request.appearanceOptions, { maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' });
+    await f.manager.cancel(job.id);
+    await waitFor(() => f.manager.get(job.id).state === 'cancelled');
+  }
+});
+
+test('grass continuity is dispatched separately from geometry and palette while retaining sensitivity', async t => {
+  const f = await fixture(t);
+  for (const [options, expected] of [[{}, 50], [{ grassContinuity: 0 }, 0], [{ grassContinuity: 72.5 }, 72.5], [{ grassContinuity: 100 }, 100]]) {
+    const job = await f.start({ grassSensitivity: 35, ...options });
+    const worker = f.children.at(-1);
+    assert.equal(job.options.grassContinuity, expected);
+    assert.equal(worker.request.grassContinuity, expected);
+    assert.equal(worker.request.grassSensitivity, 35);
+    assert.equal(worker.request.options.grassContinuity, undefined);
+    assert.equal(worker.request.options.grassSensitivity, undefined);
+    assert.deepEqual(worker.request.appearanceOptions, { maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' });
+    await f.manager.cancel(job.id);
+    await waitFor(() => f.manager.get(job.id).state === 'cancelled');
+  }
+});
+
+test('invalid grass continuity cannot launch a worker', async t => {
+  const f = await fixture(t);
+  for (const grassContinuity of [-1, 101, NaN, Infinity, '50', null, false, undefined]) {
+    await assert.rejects(f.start({ grassContinuity }), { code: 'CONFIG_INVALID' });
+  }
+  assert.equal(f.children.length, 0);
+});
+
 test('invalid color budgets and mountain colors cannot launch generation', async t => {
   const f = await fixture(t);
   for (const options of [{ maxColors: 1 }, { maxColors: 5 }, { maxColors: '3' }, { grassColor: 'green' }, { rockColor: '#fff' }, { grassColor: null }]) {

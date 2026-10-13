@@ -31,6 +31,10 @@ export interface AppearanceSelection {
   bearingDeg: number;
   mmPerMeter: number;
 }
+/** Original-image rock cells selected for grass filling, queried in model millimetres. */
+export interface GrassContinuityMask {
+  shouldFill(xMm: number, yMm: number): boolean;
+}
 export interface ModelAppearance {
   schemaVersion: 1;
   faceClasses: FaceClass[];

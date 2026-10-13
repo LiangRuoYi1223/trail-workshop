@@ -148,11 +148,19 @@ port.on('message', async event => {
     if (result.mesh.indices.length / 3 > 500000) throw Object.assign(new Error('模型超过 50 万三角面，请降低精度'), { code: 'MESH_TOO_COMPLEX' });
     const selection = result.report.selection;
     const appearanceSelection = { center: selection.center, bearingDeg: selection.bearingDeg, mmPerMeter: selection.mmPerMeter };
-    result.appearance = core.buildModelAppearance(result.mesh, appearanceSelection, message.appearanceOptions, image);
+    const grassContinuity = message.grassContinuity === undefined ? 50 : message.grassContinuity;
+    // All visible and closed material surfaces share the original-image context.
+    // Independently smoothing a clipped part could disagree with the preview.
+    const grassMask = image && grassContinuity > 0
+      ? core.createGrassContinuityMask(result.mesh, appearanceSelection, image, message.grassSensitivity, grassContinuity)
+      : undefined;
+    result.appearance = core.buildModelAppearance(result.mesh, appearanceSelection, message.appearanceOptions, image,
+      message.grassSensitivity, grassContinuity, grassMask);
     if (result.mesh.materialParts) {
       for (const part of result.mesh.materialParts) {
         controller.signal.throwIfAborted();
-        part.faceClasses = core.buildModelAppearance(part, appearanceSelection, message.appearanceOptions, image).faceClasses;
+        part.faceClasses = core.buildModelAppearance(part, appearanceSelection, message.appearanceOptions, image,
+          message.grassSensitivity, grassContinuity, grassMask).faceClasses;
       }
       core.validateMaterialParts(result.mesh);
     }
