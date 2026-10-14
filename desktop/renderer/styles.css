@@ -144,6 +144,23 @@ h1, h2, p { margin: 0; }
 .map-rotation-marker:active { cursor: grabbing; }
 .map-rotation-marker svg { width: 30px; height: 30px; fill: var(--paper); stroke: var(--accent); stroke-width: 1.8; filter: drop-shadow(0 2px 3px #25332b30); }
 .map-rotation-marker svg path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.map-text-edge-marker { display: flex; align-items: center; justify-content: center; background: var(--paper); color: var(--accent); border: 1px solid var(--accent); border-radius: 50%; font-size: 11px; font-weight: 650; box-shadow: 0 2px 3px #25332b25; cursor: pointer; }
+.map-text-edge-marker[aria-pressed="true"] { background: var(--accent); color: var(--paper); }
+.map-text-edge-marker[aria-disabled="true"] { opacity: .5; cursor: default; }
+.map-text-edge-marker:hover:not([aria-disabled="true"]) { border-width: 2px; }
+.map-text-edge-marker:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.map-text-rotation-marker { cursor: grab; }
+.map-text-rotation-marker:active { cursor: grabbing; }
+.map-text-rotation-marker svg { width: 28px; height: 28px; fill: var(--paper); stroke: #77511a; stroke-width: 1.8; filter: drop-shadow(0 2px 3px #25332b30); }
+.map-text-rotation-marker svg path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.map-text-rotation-marker[aria-disabled="true"] { opacity: .5; cursor: default; }
+.map-text-rotation-marker:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 50%; }
+.legend-text { display: inline-block; width: 11px; height: 11px; border: 1px solid #25332b50; border-radius: 2px; }
+.text-angle-field { margin-top: 15px; }
+.text-angle-field input[type="range"] { min-height: 30px; padding: 0; border: 0; margin: 6px 0 0; background: transparent; accent-color: var(--accent); cursor: pointer; }
+.text-angle-field input[type="range"]:disabled { opacity: .45; cursor: default; }
+.text-angle-field .field-hint { margin-top: 2px; }
+.text-preview-error { color: var(--error); }
 .map-center-menu { position: absolute; z-index: 700; width: 150px; background: var(--paper); padding: 5px; border: 1px solid var(--line-strong); border-radius: 5px; box-shadow: 0 5px 15px #25332b26; }
 .map-center-menu button { display: block; width: 100%; min-height: 34px; border: 0; padding: 8px 11px; text-align: left; font-size: 12px; }
 .map-rotation-status { position: absolute; z-index: 600; left: 16px; bottom: 70px; padding: 7px 9px 7px 12px; display: flex; align-items: center; gap: 12px; background: var(--paper); color: var(--accent); border: 1px solid var(--line-strong); border-radius: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }

@@ -20,14 +20,14 @@ export function validateOptions(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DesktopError('CONFIG_INVALID', '模型参数格式无效');
   const allowed = new Set(['shape', 'widthMm', 'heightMm', 'polygonSides', 'cornerRadiusMm', 'bearingDeg', 'paddingFraction',
     'center', 'groundWidthM', 'baseThicknessMm', 'zExaggeration', 'gridColumns', 'smoothing', 'maxMissingFraction', 'routeWidthMm', 'routeHeightMm', 'routeColor', 'frameWidthMm', 'maxColors', 'grassColor', 'rockColor', 'grassSensitivity', 'grassContinuity',
-    'grassEnabled', 'rockEnabled', 'routeEnabled', 'textEnabled', 'snowEnabled', 'snowCoveragePercent', 'snowMaxThicknessMm', 'baseText', 'baseTextSizeMm', 'baseColorSource', 'baseColor', 'textColorSource', 'textColor']);
+    'grassEnabled', 'rockEnabled', 'routeEnabled', 'textEnabled', 'snowEnabled', 'snowCoveragePercent', 'snowMaxThicknessMm', 'baseText', 'baseTextSizeMm', 'baseTextAngleDeg', 'baseTextEdgeIndex', 'baseColorSource', 'baseColor', 'textColorSource', 'textColor']);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new DesktopError('CONFIG_INVALID', '存在不支持的模型参数');
   const output = {
     shape: 'rectangle', widthMm: 120, heightMm: 80, polygonSides: 6, cornerRadiusMm: 0,
     bearingDeg: 0, paddingFraction: 0.1, baseThicknessMm: 2, zExaggeration: 2,
     gridColumns: 129, smoothing: 'raw', maxMissingFraction: 0.01, routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
     grassSensitivity: 50, grassContinuity: 50, maxColors: 6, grassColor: '#799278', rockColor: '#a9aa92',
-    baseText: '', baseTextSizeMm: 3, baseColorSource: 'rock', baseColor: '#a9aa92', textColorSource: 'route', textColor: '#c84832',
+    baseText: '', baseTextSizeMm: 3, baseTextAngleDeg: 180, baseTextEdgeIndex: 0, baseColorSource: 'rock', baseColor: '#a9aa92', textColorSource: 'route', textColor: '#c84832',
     snowEnabled: false, snowCoveragePercent: 30, snowMaxThicknessMm: 1,
     ...input,
     grassEnabled: input.grassEnabled === undefined ? true : input.grassEnabled,
@@ -58,6 +58,11 @@ export function validateOptions(input = {}) {
   if (typeof output.baseText !== 'string' || Array.from(output.baseText).length > 32 || /[\x00-\x1f\x7f\u2028\u2029]/.test(output.baseText))
     throw new DesktopError('CONFIG_INVALID', '底座文字须为单行，最多 32 个字符');
   range('baseTextSizeMm', 1.5, 10, '文字字号');
+  range('baseTextAngleDeg', 0, 360, '圆形文字位置');
+  if(output.baseTextAngleDeg===360)output.baseTextAngleDeg=0;
+  range('baseTextEdgeIndex', 0, 7, '文字所在边', true);
+  if(output.shape==='polygon'&&output.baseTextEdgeIndex>=output.polygonSides)
+    throw new DesktopError('CONFIG_INVALID', '文字所在边超出当前多边形边数，请重新选择');
   if (!['grass', 'rock', 'custom'].includes(output.baseColorSource) || !['route', 'custom'].includes(output.textColorSource))
     throw new DesktopError('CONFIG_INVALID', '请选择有效的底座或文字颜色来源');
   if (typeof output.snowEnabled !== 'boolean') throw new DesktopError('CONFIG_INVALID', '积雪开关须为有效的开启或关闭状态');

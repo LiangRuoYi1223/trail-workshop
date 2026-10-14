@@ -13,7 +13,7 @@ export async function generatePrintableTerrain(request:GeneratePrintableTerrainR
   const routeWidth=options.routeWidthMm ?? 1,routeHeight=options.routeHeightMm ?? 1,frameWidth=options.frameWidthMm ?? 3;
   const routeEnabled=options.routeEnabled===undefined?true:options.routeEnabled,textEnabled=options.textEnabled===undefined?true:options.textEnabled;
   if(typeof routeEnabled!=='boolean'||typeof textEnabled!=='boolean')throw new TerrainError('CONFIG_INVALID','路线与文字开关须为布尔值');
-  validateBaseTextParameters(textEnabled?options:{...options,baseText:'',baseTextContours:undefined});
+  const textParameters=validateBaseTextParameters(textEnabled?options:{...options,baseText:'',baseTextContours:undefined});
   const snowEnabled=options.snowEnabled ?? false,snowCoveragePercent=options.snowCoveragePercent ?? 30,snowMaxThicknessMm=options.snowMaxThicknessMm ?? 1;
   if(typeof snowEnabled!=='boolean')throw new TerrainError('CONFIG_INVALID','积雪开关须为有效的布尔值');
   if(!Number.isFinite(snowCoveragePercent)||snowCoveragePercent<0||snowCoveragePercent>100)throw new TerrainError('CONFIG_INVALID','积雪覆盖率须在 0–100% 之间');
@@ -27,6 +27,8 @@ export async function generatePrintableTerrain(request:GeneratePrintableTerrainR
   const integrated=buildIntegratedTerrainMesh({terrainMesh:terrain.mesh,routeSegmentsMm:terrain.routeSegmentsMm,routeEnabled,textEnabled,
     routeWidthMm:routeWidth,routeHeightMm:routeHeight,frameWidthMm:frameWidth,baseThicknessMm:options.baseThicknessMm ?? 2,
     baseText:options.baseText,baseTextSizeMm:options.baseTextSizeMm,baseTextContours:options.baseTextContours,baseTextFontIdentity:options.baseTextFontIdentity,
+    baseTextAngleDeg:textParameters.baseTextAngleDeg,baseTextEdgeIndex:textParameters.baseTextEdgeIndex,
+    shape:options.shape,widthMm:options.widthMm,heightMm:options.heightMm,polygonSides:options.polygonSides,cornerRadiusMm:options.cornerRadiusMm,
     snowEnabled,snowCoveragePercent,snowMaxThicknessMm,zExaggeration:options.zExaggeration ?? 2,signal:request.signal});
   if(integrated.mesh.materialParts) {
     // Use the binary STL's coordinates for every solid before checking and hashing
@@ -49,7 +51,7 @@ export async function generatePrintableTerrain(request:GeneratePrintableTerrainR
   const snow='snow' in integrated.report?integrated.report.snow:undefined;
   const report={...terrain.report,stage:2,modelKind:snowEnabled&&snowCoveragePercent>0?(routeEnabled?'integrated-terrain-snow-route-and-base':'integrated-terrain-snow-and-base'):(routeEnabled?'integrated-terrain-route-and-base':'integrated-terrain-and-base'),
     config:{...(terrain.report.config as object),routeEnabled,textEnabled,routeWidthMm:routeWidth,routeHeightMm:routeHeight,frameWidthMm:frameWidth,
-      snowEnabled,snowCoveragePercent,snowMaxThicknessMm,baseText:options.baseText??'',baseTextSizeMm:options.baseTextSizeMm??3,effectiveFrameWidthMm:integrated.report.frame.widthMm},
+      snowEnabled,snowCoveragePercent,snowMaxThicknessMm,baseText:options.baseText??'',baseTextSizeMm:options.baseTextSizeMm??3,baseTextAngleDeg:textParameters.baseTextAngleDeg,baseTextEdgeIndex:textParameters.baseTextEdgeIndex,effectiveFrameWidthMm:integrated.report.frame.widthMm},
     ...(snow?{snow}:{}),
     integratedModel:{...integrated.report,sourceTerrainVolumeMm3:sourceVolume,addedVolumeMm3:volumeDifference,volumeErrorMm3:volumeError,volumeToleranceMm3:volumeTolerance},
     validation,materialValidation,generationMs:Math.round(performance.now()-started),

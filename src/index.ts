@@ -1,6 +1,8 @@
 export { generateTerrain } from './generate-terrain.js';
 export { generatePrintableTerrain } from './generate-printable-terrain.js';
 export { buildIntegratedTerrainMesh } from './mesh/integrated-model.js';
+export { prepareTextLayout } from './mesh/base-text.js';
+export type {BaseTextLayoutInput} from './mesh/base-text.js';
 export { parseGpxXml } from './gpx/parse-gpx.js';
 export { parseKmlXml, KmlParseError } from './kml/parse-kml.js';
 export { parseRouteXml, RouteParseError } from './route/parse-route.js';
@@ -8,6 +10,7 @@ export type { KmlParseOptions, KmlParseErrorCode } from './kml/parse-kml.js';
 export type { RouteParseOptions, RouteParseErrorCode, RouteFormat } from './route/parse-route.js';
 export { createTerrainFrame } from './geo/frame.js';
 export { buildFootprintPolygonMm } from './vendor/trailprint/footprint.js';
+export { buildTerrainFootprintPolygonMm } from './vendor/trailprint/clipped-heightfield.js';
 export { createGeotiffSampler } from './dem/geotiff.js';
 export { loadLocalDem, loadOpenTopographyDem } from './dem/provider.js';
 export { loadCopernicusDem } from './dem/copernicus.js';

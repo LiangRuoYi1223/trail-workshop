@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { createJobTiming, createTimingHistory, probeTimingCache, timingFeatures } from './timing.mjs';
 import { DesktopError, checkedInput, publicError, removeOwnedTask, validateOptions, verifyOutput } from './files.mjs';
+import {createBaseTextPreview} from './base-text-preview.mjs';
 import { LARGE_ROUTE_WARNING_BYTES, MAX_ROUTE_BYTES } from './route-limits.mjs';
 
 const MAX_DEM_BYTES = 256 * 1024 * 1024;
@@ -284,15 +285,20 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
         const frame = core.createTerrainFrame(route.info.segments.flat(), validated);
         let build = core.buildFootprintPolygonMm;
         if (!build) ({ buildFootprintPolygonMm: build } = await import(new URL('./vendor/trailprint/footprint.js', coreModuleUrl)));
-        const outlineMm = build(frame.crop) ?? Array.from({ length: 128 }, (_, i) => ({ x: frame.crop.widthMm / 2 * Math.cos(i * 2 * Math.PI / 128), y: frame.crop.widthMm / 2 * Math.sin(i * 2 * Math.PI / 128) }));
+        const longest=Math.max(frame.crop.widthMm,frame.crop.heightMm),grid=validated.gridColumns;
+        const cols=Math.max(3,Math.round((grid-1)*frame.crop.widthMm/longest)+1),rows=Math.max(3,Math.round((grid-1)*frame.crop.heightMm/longest)+1);
+        const outlineMm = core.buildTerrainFootprintPolygonMm?.(frame.crop,cols,rows) ?? build(frame.crop)
+          ?? Array.from({ length: 128 }, (_, i) => ({ x: frame.crop.widthMm / 2 * Math.cos(i * 2 * Math.PI / 128), y: frame.crop.widthMm / 2 * Math.sin(i * 2 * Math.PI / 128) }));
         const radius = frame.crop.radiusMm ?? frame.crop.widthMm / 2;
         const controlVerticesMm = build({ ...frame.crop, cornerRadiusMm: 0 })
           ?? [{ x: radius, y: 0 }, { x: 0, y: radius }, { x: -radius, y: 0 }, { x: 0, y: -radius }];
+        const baseTextPreview=await createBaseTextPreview(core,frame,outlineMm,validated);
         return { selection: { center: { lat: frame.crop.centerLat, lon: frame.crop.centerLon }, groundWidthM: frame.groundWidthM,
           groundHeightM: frame.groundHeightM, bearingDeg: frame.crop.bearingDeg },
           routeSegmentsMm: route.info.segments.map(segment => segment.map(frame.geoToMm)), outlineMm, controlVerticesMm,
           controlVerticesGeo: controlVerticesMm.map(point => frame.mmToGeo(point.x, point.y)),
-          outlineGeo: outlineMm.map(point => frame.mmToGeo(point.x, point.y)), bounds: { ...frame.bounds } };
+          outlineGeo: outlineMm.map(point => frame.mmToGeo(point.x, point.y)), bounds: { ...frame.bounds },
+          ...(baseTextPreview?{baseTextPreview}:{}) };
       } catch (error) { const issue = publicError(error, '无法建立路线取景，请检查尺寸'); throw new DesktopError(issue.code, issue.message); }
     },
     async start({ routeId, demId, imageId, demMode, imageMode = 'local', imageLookbackMonths = 24, options, offlineOnly = false, imageOfflineOnly = false }) {

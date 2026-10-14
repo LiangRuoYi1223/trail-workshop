@@ -36,6 +36,8 @@ function outlineFor(crop: TerrainCropRegion, cols: number, rows: number): Vec2[]
   const segments = Math.max(32, Math.min(512, Math.ceil(needed / 4) * 4));
   return circleClipPolygon(radius, segments);
 }
+/** Exact convex footprint used to clip the source grid, shared with model-space previews. */
+export {outlineFor as buildTerrainFootprintPolygonMm};
 
 /** Conservative preflight bound: original grid plus boundary intersections and boundary fans. */
 export function estimateTriangleCount(crop: TerrainCropRegion, cols: number, rows: number): number {

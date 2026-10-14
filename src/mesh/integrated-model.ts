@@ -9,7 +9,7 @@ import { buildMaterialParts } from './material-parts.js';
 import { buildRouteCorridor, regionsAreaMm2, toIntPoint, SCALE, type IntPoint, type PolygonRegion } from '../route/corridor.js';
 import { precisePartition } from '../route/precise-partition.js';
 import { MAX_MESH_TRIANGLES } from '../vendor/trailprint/heightfield-mesh.js';
-import type { TerrainMeshPayload } from '../vendor/trailprint/types.js';
+import type { BaseShape, TerrainMeshPayload } from '../vendor/trailprint/types.js';
 
 type Kind=NonNullable<TerrainMeshPayload['faceKinds']>[number];
 type TopKind='terrain'|'route'|'frame'|'text';
@@ -19,6 +19,8 @@ export interface IntegratedMeshRequest {
   terrainMesh:TerrainMeshPayload;
   routeEnabled?:boolean; textEnabled?:boolean;
   baseText?:string; baseTextSizeMm?:number; baseTextContours?:BaseTextContour[]; baseTextFontIdentity?:BaseTextFontIdentity;
+  baseTextAngleDeg?:number; baseTextEdgeIndex?:number;
+  shape?:BaseShape; widthMm?:number; heightMm?:number; polygonSides?:number; cornerRadiusMm?:number;
   routeSegmentsMm:Array<Array<{x:number;y:number}>>;
   routeWidthMm?:number; routeHeightMm?:number; frameWidthMm?:number; baseThicknessMm?:number;
   snowEnabled?:boolean; snowCoveragePercent?:number; snowMaxThicknessMm?:number; zExaggeration?:number;

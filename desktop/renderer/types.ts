@@ -9,7 +9,8 @@ export interface ModelOptions {
   grassSensitivity?: number; grassContinuity?: number;
   maxColors:1|2|3|4|5|6; grassColor:string; rockColor:string;
   grassEnabled:boolean; rockEnabled:boolean; routeEnabled:boolean; textEnabled:boolean;
-  baseText?:string; baseTextSizeMm?:number; baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string; textColorSource?:'route'|'custom'; textColor?:string;
+  baseText?:string; baseTextSizeMm?:number; baseTextAngleDeg?:number; baseTextEdgeIndex?:number;
+  baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string; textColorSource?:'route'|'custom'; textColor?:string;
   snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
   center?: GeoPoint; groundWidthM?: number;
 }
@@ -34,12 +35,21 @@ export interface ModelAppearance {
   palette:Array<{id:FaceClass;name:string;color:string}>; options:AppearanceOptions;
   classification:'rgb-greenness'|'uniform'; hash:string; source?:Record<string,unknown>;
 }
+export interface TextContour<T> { outer:T[]; holes:T[][] }
+export interface BaseTextPreviewGeometry {
+  contoursMm:TextContour<XY>[]; contoursGeo:TextContour<GeoPoint>[];
+  outlineMm:XY[]; outlineGeo:GeoPoint[]; anchorMm:XY; anchorGeo:GeoPoint;
+  rotationDeg:number; effectiveFrameWidthMm:number;
+  edgeCentersMm:XY[]; edgeCentersGeo:GeoPoint[]; error?:undefined;
+}
+export type BaseTextPreview = BaseTextPreviewGeometry | {error:string};
 export interface Inspection {
   selection: { center: GeoPoint; groundWidthM: number; groundHeightM: number; bearingDeg: number };
   routeSegmentsMm: XY[][]; outlineMm: XY[];
   outlineGeo: GeoPoint[];
   controlVerticesMm: XY[]; controlVerticesGeo: GeoPoint[];
   bounds: { west: number; south: number; east: number; north: number };
+  baseTextPreview?:BaseTextPreview;
 }
 export interface PhaseProgress {
   state: 'running' | 'complete'; progress: number; message: string;

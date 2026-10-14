@@ -5,6 +5,7 @@ import SupportAuthorButton from './components/SupportAuthorButton';
 import SharedPrintColors from './components/SharedPrintColors';
 import { geometryOptions, printPaletteCount, appearanceOptions, plannedPrintPaletteCount, previewPrintClasses } from './route-color';
 import { acquisitionRows, elapsedLabel, failurePresentation, idleStatus, phaseLabel, estimateLabel, elapsedDurationLabel, totalDurationLabel, durationLabel } from './job-progress';
+import { clampTextEdgeIndex, validateTextPlacement } from './text-placement';
 import type { CacheInfo, DemInfo, ImageInfo, ImageMode, SurfaceImageSource, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
 
 const DEFAULTS: ModelOptions = {
@@ -13,7 +14,7 @@ const DEFAULTS: ModelOptions = {
   gridColumns: 129, smoothing: 'raw', routeWidthMm: 1, routeHeightMm: 1, routeColor: '#c84832', frameWidthMm: 3,
   grassSensitivity:50,grassContinuity:50,
   maxColors:6,grassEnabled:true,rockEnabled:true,routeEnabled:true,textEnabled:false,grassColor:'#799278',rockColor:'#a9aa92',
-  baseText:'',baseTextSizeMm:3,baseColorSource:'rock',baseColor:'#a9aa92',textColorSource:'route',textColor:'#c84832',
+  baseText:'',baseTextSizeMm:3,baseTextAngleDeg:180,baseTextEdgeIndex:0,baseColorSource:'rock',baseColor:'#a9aa92',textColorSource:'route',textColor:'#c84832',
   snowEnabled:false,snowCoveragePercent:30,snowMaxThicknessMm:1,
 };
 const api = window.terrain;
@@ -43,6 +44,8 @@ function validate(options: ModelOptions): string {
   ];
   for (const [key, min, max, label] of rules) { const value = options[key]; if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) return `${label}需在 ${min}–${max} 之间。`; }
   if (!Number.isInteger(options.polygonSides)) return '多边形边数需为整数。';
+  const textPlacementError = validateTextPlacement(options);
+  if (textPlacementError) return textPlacementError;
   if (!/^#[\da-f]{6}$/i.test(options.routeColor)) return '请选择有效的路线颜色。';
   if (!/^#[\da-f]{6}$/i.test(options.grassColor) || !/^#[\da-f]{6}$/i.test(options.rockColor)) return '请选择有效的山体颜色。';
   if (![options.grassEnabled,options.rockEnabled,options.routeEnabled,options.textEnabled].every(value=>typeof value==='boolean')) return '请选择有效的打印部分。';
@@ -64,10 +67,10 @@ function validate(options: ModelOptions): string {
   if (!Number.isFinite(options.cornerRadiusMm) || options.cornerRadiusMm < 0 || options.cornerRadiusMm > radius) return `当前外形的圆角半径需在 0–${radius.toFixed(1)} mm 之间。`;
   return '';
 }
-function NumberField({ label, value, onChange, min, max, step = 1, unit = 'mm', disabled = false }: {
-  label: string; value: number; onChange(value: number): void; min: number; max: number; step?: number; unit?: string; disabled?: boolean;
+function NumberField({ label, value, onChange, min, max, step = 1, unit = 'mm', disabled = false, id:providedId }: {
+  label: string; value: number; onChange(value: number): void; min: number; max: number; step?: number; unit?: string; disabled?: boolean; id?:string;
 }) {
-  const id = useId();
+  const generatedId = useId(), id = providedId ?? generatedId;
   return <div className="number-field"><label htmlFor={id}>{label}</label><div className="input-unit"><input id={id} type="number" min={min} max={max} step={step} value={Number.isFinite(value) ? value : ''} disabled={disabled} onChange={event => onChange(event.currentTarget.value === '' ? NaN : Number(event.currentTarget.value))} /><span aria-hidden="true">{unit}</span></div></div>;
 }
 function MountainMark() { return <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 23 12 6l5 9 3-5 6 13H3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /><path d="m8.8 12.2 3.2 2.1 2.9-2.8M16.2 22l3.5-4.8 3.2 1.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
@@ -119,7 +122,9 @@ export default function App() {
   const paletteError = preview&&!stale&&colorCount>options.maxColors ? `当前配色需要 ${colorCount} 色。请复用已有颜色。` : '';
   const configError = validate(options);
   const framingSignature = JSON.stringify({ shape:options.shape, widthMm:options.widthMm, heightMm:options.heightMm, polygonSides:options.polygonSides,
-    cornerRadiusMm:options.cornerRadiusMm, bearingDeg:options.bearingDeg, paddingFraction:options.paddingFraction, center:options.center, groundWidthM:options.groundWidthM });
+    cornerRadiusMm:options.cornerRadiusMm, bearingDeg:options.bearingDeg, paddingFraction:options.paddingFraction, center:options.center, groundWidthM:options.groundWidthM,
+    textEnabled:options.textEnabled, baseText:options.baseText, baseTextSizeMm:options.baseTextSizeMm, baseTextAngleDeg:options.baseTextAngleDeg,
+    baseTextEdgeIndex:options.baseTextEdgeIndex, frameWidthMm:options.frameWidthMm, gridColumns:options.gridColumns });
   const canGenerate = !!api && !!route && (demMode === 'auto' || !!dem) && !controlsLocked && !configError && !inspectionError && !inspectionPending;
   const canSave = !!api && !!previewId && !!preview && !stale && job?.state === 'succeeded' && !controlsLocked && !previewPending && !paletteError;
   const jobError = job?.error && (!job.error.code.startsWith('IMAGE_') || (job.imageMode === imageMode && (imageMode !== 'auto' || (job.imageLookbackMonths ?? 24) === imageLookbackMonths))) ? job.error : undefined;
@@ -238,6 +243,7 @@ export default function App() {
     setOptions(previous => {
       const next = { ...previous, [key]: value };
       if (key === 'shape' && value === 'circle') next.cornerRadiusMm = 0;
+      if (key === 'polygonSides' || key === 'shape' && value === 'polygon') next.baseTextEdgeIndex = clampTextEdgeIndex(previous.baseTextEdgeIndex, next.polygonSides);
       return next;
     });
     setError(''); setSavedPath('');
@@ -314,6 +320,7 @@ export default function App() {
   const center = options.center || inspection?.selection.center;
   const snowReport = preview?.report.snow;
   const textReport = (preview?.report.integratedModel as {baseText?:{text:string;requestedFrameWidthMm:number;effectiveFrameWidthMm:number;finalSizeMm:{width:number;height:number}}}|undefined)?.baseText;
+  const textPreviewError = options.textEnabled && !!options.baseText?.trim() && !inspectionPending ? inspection?.baseTextPreview?.error : undefined;
 
   const grassSensitivity = options.grassSensitivity ?? 50;
   const grassContinuity = options.grassContinuity ?? 50;
@@ -383,7 +390,14 @@ export default function App() {
         <section className="control-section base-style-section"><h2>底座与文字</h2>
           <label className="text-field" htmlFor="base-text">上表面靠边凸字<input id="base-text" type="text" value={options.baseText??''} disabled={controlsLocked||!options.textEnabled} placeholder="例如：格聂牧场 · 2026" onChange={event=>update('baseText',event.currentTarget.value)} aria-describedby="base-text-hint" /></label>
           <div className="field-pair"><NumberField label="文字字号" value={options.baseTextSizeMm??3} onChange={value=>update('baseTextSizeMm',value)} min={1.5} max={10} step={.1} disabled={controlsLocked||!options.textEnabled} /></div>
-          <p id="base-text-hint" className="field-hint">单行，最多 32 个字符；凸起 0.6 mm。文字沿正面外沿居中；需要时会增加外沿，最终尺寸见生成结果。</p>
+          {options.shape === 'circle' && <div className="text-angle-field">
+            <NumberField id="base-text-angle-number" label="文字周向角度" value={options.baseTextAngleDeg??180} onChange={value=>update('baseTextAngleDeg',value)} min={0} max={360} step={1} unit="°" disabled={controlsLocked||!options.textEnabled} />
+            <input id="base-text-angle" aria-label="文字周向角度滑块" aria-describedby="base-text-position-hint" type="range" min={0} max={360} step={1} value={Number.isFinite(options.baseTextAngleDeg??180)?options.baseTextAngleDeg??180:180} disabled={controlsLocked||!options.textEnabled} onChange={event=>update('baseTextAngleDeg',Number(event.currentTarget.value))} />
+            <p id="base-text-position-hint" className="field-hint">0° 上方 · 90° 右方 · 180° 下方 · 270° 左方，随取景旋转。</p>
+          </div>}
+          {options.shape === 'polygon' && <><div className="field-pair"><NumberField id="base-text-edge-number" label="文字所在边" value={(options.baseTextEdgeIndex??0)+1} min={1} max={options.polygonSides} step={1} unit="边" disabled={controlsLocked||!options.textEnabled} onChange={value=>update('baseTextEdgeIndex',value-1)} /></div><p className="field-hint">输入第 1–{options.polygonSides} 边，或点击地图边编号；第 1 边为正前方，文字在所选边居中。</p></>}
+          <p id="base-text-hint" className="field-hint">单行，最多 32 个字符；凸起 0.6 mm。{options.shape==='circle'?'文字整行沿圆周切线摆放。':options.shape==='polygon'?'文字沿所选外沿居中。':'文字沿正面外沿居中。'}导入路线后，地图会显示真实字形；需要时会增加外沿。</p>
+          {textPreviewError && <p className="field-hint text-preview-error" role="status">文字预览：{textPreviewError}</p>}
         </section>
         <section className="control-section advanced-section"><details><summary>更多设置<span>底座、精度与取景</span></summary><div className="advanced-content">
           <div className="field-pair"><NumberField label="底座厚度" value={options.baseThicknessMm} onChange={value => update('baseThicknessMm', value)} min={.5} max={30} step={.5} disabled={controlsLocked} /><NumberField label="外沿宽度" value={options.frameWidthMm} onChange={value => update('frameWidthMm', value)} min={0} max={20} step={.5} disabled={controlsLocked} /></div>

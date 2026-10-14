@@ -17,6 +17,7 @@ export interface BaseTextFontIdentity {family:string;fileName:string;sha256:stri
 export interface PrintableTerrainOptions extends TerrainOptions {
   routeEnabled?: boolean; textEnabled?: boolean;
   baseText?:string; baseTextSizeMm?:number; baseTextContours?:BaseTextContour[]; baseTextFontIdentity?:BaseTextFontIdentity;
+  baseTextAngleDeg?:number; baseTextEdgeIndex?:number;
   routeWidthMm?: number; routeHeightMm?: number; frameWidthMm?: number;
   snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
 }

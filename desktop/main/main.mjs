@@ -11,7 +11,7 @@ import { saveModelFile, assertPermanentSaveTarget } from './save-model.mjs';
 import { cacheDirectoryBytes, clearOwnedCacheDirectory, createMapCache } from './map-cache.mjs';
 import { createSessionStore } from './session.mjs';
 
-const VERSION = '0.4.8';
+const VERSION = '0.4.9';
 const developmentRoot = fileURLToPath(new URL('../../', import.meta.url));
 const argument = name => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 const dataDirectory = argument('data-dir');
@@ -71,7 +71,7 @@ manager = createDesktopManager({ taskRoot, coreModuleUrl, demCacheDir, imageCach
 const sessions = createSessionStore({ userDataDirectory, manager });
 if (runtimeCheckDirectory) {
   try {
-    const { checkRuntime } = await import(process.argv.includes('--runtime-check-shared-colors') ? './runtime-check-shared-colors.mjs' : process.argv.includes('--runtime-check-base-text') ? './runtime-check-base-text.mjs' : process.argv.includes('--runtime-check-snow') ? './runtime-check-snow.mjs' : './runtime-check.mjs');
+    const { checkRuntime } = await import(process.argv.includes('--runtime-check-text-placement') ? './runtime-check-text-placement.mjs' : process.argv.includes('--runtime-check-shared-colors') ? './runtime-check-shared-colors.mjs' : process.argv.includes('--runtime-check-base-text') ? './runtime-check-base-text.mjs' : process.argv.includes('--runtime-check-snow') ? './runtime-check-snow.mjs' : './runtime-check.mjs');
     const report = await checkRuntime({ app, manager, routePath: runtimeCheckLocalRoute, demPath: runtimeCheckDem, imagePath: runtimeCheckImage,
       destination: runtimeCheckDirectory, onlineRoutePath: runtimeCheckRoute, imageMode: runtimeCheckImageMode });
     console.log(JSON.stringify({ passed: report.passed, runtime: report.runtime, result: report.job?.result, saved: report.saved,
