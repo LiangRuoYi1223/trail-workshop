@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import RouteMap from './components/RouteMap';
 import TerrainView from './components/TerrainView';
 import SupportAuthorButton from './components/SupportAuthorButton';
+import UsageGuideButton from './components/UsageGuideButton';
 import SharedPrintColors from './components/SharedPrintColors';
 import { geometryOptions, printPaletteCount, appearanceOptions, plannedPrintPaletteCount, previewPrintClasses } from './route-color';
 import { acquisitionRows, elapsedLabel, failurePresentation, idleStatus, phaseLabel, estimateLabel, elapsedDurationLabel, totalDurationLabel, durationLabel } from './job-progress';
@@ -333,7 +334,7 @@ export default function App() {
 
   return <div className={`app-shell${dragging ? ' is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = !controlsLocked && event.dataTransfer.types.includes('Files') ? 'copy' : 'none'; }} onDragEnter={event => { event.preventDefault(); if (!controlsLocked && event.dataTransfer.types.includes('Files')) { dragDepth.current++; setDragging(true); } }} onDragLeave={event => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current || event.relatedTarget === null && (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight)) { dragDepth.current = 0; setDragging(false); } }} onDrop={event => { event.preventDefault(); dragDepth.current = 0; setDragging(false); if (!controlsLocked && event.dataTransfer.types.includes('Files')) void importDropped(Array.from(event.dataTransfer.files)); }}>
     <header className="app-header"><div className="app-brand"><MountainMark /><div><h1>徒步地形工坊</h1><p>把走过的路，制作成一座地形</p></div></div>
-      <div className="header-actions"><SupportAuthorButton /><div className="header-meta">独立桌面版{runtime ? ` · ${runtime.version}` : ''}<span>输出单位：毫米</span></div></div>
+      <div className="header-actions"><UsageGuideButton /><SupportAuthorButton /><div className="header-meta">独立桌面版{runtime ? ` · ${runtime.version}` : ''}<span>输出单位：毫米</span></div></div>
     </header>
     {!api && <div className="bridge-warning" role="alert">当前为界面预览。文件导入、模型生成和保存请在桌面软件中使用。</div>}
     <main className="app-main">

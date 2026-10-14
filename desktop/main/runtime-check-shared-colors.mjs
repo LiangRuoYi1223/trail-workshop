@@ -13,7 +13,7 @@ export async function checkRuntime({app,manager,routePath,demPath,destination}){
  const output=resolve(destination);await mkdir(output,{recursive:true});
  const report={passed:false,runtime:{packaged:app.isPackaged,version:app.getVersion(),applicationRoot:app.getAppPath()},cases:[]};
  try{
-  assert.equal(app.isPackaged,true);assert.equal(app.getVersion(),'0.4.9');
+  assert.equal(app.isPackaged,true);assert.equal(app.getVersion(),'0.4.10');
   const core=await import(pathToFileURL(join(app.getAppPath(),'core/index.js')).href);
   const route=await manager.addRoute(resolve(routePath)),dem=await manager.addDem(resolve(demPath));
   const common={maxColors:6,gridColumns:33,widthMm:120,heightMm:80,snowEnabled:true,snowCoveragePercent:30,snowMaxThicknessMm:1,frameWidthMm:3,
