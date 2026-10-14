@@ -22,8 +22,10 @@ export function buildModelAppearance(mesh: AppearanceMesh, selection: Appearance
   for (let face=0;face<count;face++) {
     const kind=mesh.faceKinds?.[face] ?? 'terrain';
     if (kind==='route' || kind==='route-wall') {faceClasses.push('route');continue;}
+    if (kind==='base' || kind==='frame' || kind==='bottom') {faceClasses.push('base');continue;}
+    if (kind==='text' || kind==='text-wall') {faceClasses.push('text');continue;}
     if (kind==='snow' || kind==='snow-wall') {faceClasses.push('snow');continue;}
-    if (kind==='frame' || kind==='wall' || kind==='bottom') {faceClasses.push('rock');continue;}
+    if (kind==='wall') {faceClasses.push('rock');continue;}
     if (kind!=='terrain') throw new AppearanceError('APPEARANCE_MESH_INVALID','外观网格含无法识别的面标签');
     if (!image) {faceClasses.push('grass');continue;}
     let x=0,y=0;

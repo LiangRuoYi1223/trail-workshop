@@ -195,3 +195,16 @@ test('material part validation supports geometry-only data and rejects open, dup
   assert.doesNotThrow(()=>validateMaterialParts(unclassified));
   for(const writer of [writeColor3mf,writeObjBundle]) assert.throws(()=>writer(unclassified,appearance),/class|分类/i);
 });
+
+test('snow export capacity includes covered terrain RGB and permits collapsing it to a selected role',async()=>{
+  const {writeColor3mf,writeObjBundle}=await api(),{mesh,appearance}=fixture();
+  const outerOnly=recolorModelAppearance(appearance,{maxColors:3});
+  assert.equal(outerOnly.palette.length,3);
+  for(const writer of [writeColor3mf,writeObjBundle]) {
+    assert.throws(()=>writer(mesh,outerOnly),/实际材料颜色.*预算/);
+    const shared=recolorModelAppearance(outerOnly,{grassEnabled:false,rockEnabled:true});
+    const files=unzip(writer(mesh,shared));
+    const manifest=JSON.parse(files.get(files.has('manifest.json')?'manifest.json':'Metadata/manifest.json')!.toString());
+    assert.deepEqual(manifest.appearance.palette.map((p:{color:string})=>p.color).sort(),['#998877','#ee3311','#ffffff']);
+  }
+});

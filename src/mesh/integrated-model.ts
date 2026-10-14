@@ -1,4 +1,6 @@
 import ClipperLib from 'clipper-lib';
+import {prepareTextLayout, TEXT_RELIEF_MM} from './base-text.js';
+import type {BaseTextContour,BaseTextFontIdentity} from '../types.js';
 import earcut, { deviation } from 'earcut';
 import { TerrainError } from '../errors.js';
 import { checkIntegratedSurfaceHeights } from './surface-check.js';
@@ -10,11 +12,13 @@ import { MAX_MESH_TRIANGLES } from '../vendor/trailprint/heightfield-mesh.js';
 import type { TerrainMeshPayload } from '../vendor/trailprint/types.js';
 
 type Kind=NonNullable<TerrainMeshPayload['faceKinds']>[number];
-type TopKind='terrain'|'route'|'frame';
+type TopKind='terrain'|'route'|'frame'|'text';
 type Triangle={ids:[number,number,number];kind:TopKind};
 interface XY extends IntPoint {baseZ:number;terrainZ:number}
 export interface IntegratedMeshRequest {
   terrainMesh:TerrainMeshPayload;
+  routeEnabled?:boolean; textEnabled?:boolean;
+  baseText?:string; baseTextSizeMm?:number; baseTextContours?:BaseTextContour[]; baseTextFontIdentity?:BaseTextFontIdentity;
   routeSegmentsMm:Array<Array<{x:number;y:number}>>;
   routeWidthMm?:number; routeHeightMm?:number; frameWidthMm?:number; baseThicknessMm?:number;
   snowEnabled?:boolean; snowCoveragePercent?:number; snowMaxThicknessMm?:number; zExaggeration?:number;
@@ -23,10 +27,13 @@ export interface IntegratedMeshRequest {
 
 /** A partition of the source surface, one raised region, and an integral flat ledge. No internal skins. */
 export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
-  const routeWidth=input.routeWidthMm ?? 1,routeHeight=input.routeHeightMm ?? 1,frameWidth=input.frameWidthMm ?? 3,base=input.baseThicknessMm ?? 2;
+  const routeEnabled=input.routeEnabled===undefined?true:input.routeEnabled,textEnabled=input.textEnabled===undefined?true:input.textEnabled;
+  if(typeof routeEnabled!=='boolean'||typeof textEnabled!=='boolean')throw new TerrainError('CONFIG_INVALID','路线与文字开关须为布尔值');
+  const effectiveText=textEnabled?input:{...input,baseText:'',baseTextContours:undefined,baseTextFontIdentity:undefined};
+  const routeWidth=input.routeWidthMm ?? 1,routeHeight=input.routeHeightMm ?? 1,requestedFrameWidth=input.frameWidthMm ?? 3,base=input.baseThicknessMm ?? 2;
   if(!Number.isFinite(routeWidth)||routeWidth<0.4||routeWidth>5)throw new TerrainError('CONFIG_INVALID','路线宽度须在 0.4–5 mm 之间');
   if(!Number.isFinite(routeHeight)||routeHeight<0.1||routeHeight>10)throw new TerrainError('CONFIG_INVALID','路线厚度须在 0.1–10 mm 之间');
-  if(!Number.isFinite(frameWidth)||frameWidth<0||frameWidth>20)throw new TerrainError('CONFIG_INVALID','一体边框宽度须在 0–20 mm 之间');
+  if(!Number.isFinite(requestedFrameWidth)||requestedFrameWidth<0||requestedFrameWidth>20)throw new TerrainError('CONFIG_INVALID','一体边框宽度须在 0–20 mm 之间');
   if(!Number.isFinite(base)||base<0.5||base>30)throw new TerrainError('CONFIG_INVALID','基础底厚须在 0.5–30 mm 之间');
   const snowCoverage=input.snowCoveragePercent??30,snowThickness=input.snowMaxThicknessMm??1,zExaggeration=input.zExaggeration??1;
   if(input.snowEnabled!==undefined&&typeof input.snowEnabled!=='boolean')throw new TerrainError('CONFIG_INVALID','积雪开关须为布尔值');
@@ -55,14 +62,16 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
   const outline:Array<{x:number;y:number}>=[];let current=start;
   do {outline.push(point(current));const n=next.get(current);if(n===undefined)throw new TerrainError('MESH_INVALID','地形顶面边界不连续');current=n;if(outline.length>next.size)throw new TerrainError('MESH_INVALID','地形顶面边界不能闭合');}while(current!==start);
   if(outline.length!==next.size)throw new TerrainError('MESH_INVALID','当前仅支持一个连通地形轮廓');
-  const buffered=buildRouteCorridor(input.routeSegmentsMm,outline,{widthMm:routeWidth});
+  const buffered=buildRouteCorridor(routeEnabled?input.routeSegmentsMm:[],outline,{widthMm:routeWidth});
   // Preserve the source surface exactly; re-quantising its straight borders can
   // create micrometre wedges that collapse when STL coordinates return to Float32.
   const sourcePoint=(p:{x:number;y:number}):IntPoint=>({X:p.x*SCALE,Y:p.y*SCALE});
   const inner=outline.map(sourcePoint);
   const regions=precisePartition(buffered.bufferedRegions,[{outer:inner,holes:[]}],'intersection');
   const corridor={...buffered,regions,paths:regions.flatMap(r=>[r.outer,...r.holes]),areaMm2:regionsAreaMm2(regions)};
-  if(!corridor.paths.length)throw new TerrainError('ROUTE_OUTSIDE_SELECTION','选区内没有可生成浮雕的连续路线，请调整取景');
+  if(routeEnabled&&!corridor.paths.length)throw new TerrainError('ROUTE_OUTSIDE_SELECTION','选区内没有可生成浮雕的连续路线，请调整取景');
+  const textLayout=prepareTextLayout(effectiveText,inner,requestedFrameWidth);
+  const frameWidth=textLayout.effectiveFrameWidthMm;
   let frameRegions:PolygonRegion[]=[],outerPaths:IntPoint[][]=[inner];
   if(frameWidth>0) {
     const offset=new ClipperLib.ClipperOffset(2,0.01*SCALE);
@@ -75,12 +84,15 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
     const expanded:IntPoint[][]=[];offset.Execute(expanded,frameWidth*SCALE);outerPaths=expanded;
     frameRegions=precisePartition(expanded.map(outer=>({outer,holes:[]})),[{outer:frameInner,holes:[]}],'difference');
   }
+  const outerBounds=outerPaths.flat();
+  textLayout.report.finalSizeMm={width:(Math.max(...outerBounds.map(p=>p.X))-Math.min(...outerBounds.map(p=>p.X)))/SCALE,height:(Math.max(...outerBounds.map(p=>p.Y))-Math.min(...outerBounds.map(p=>p.Y)))/SCALE};
   const frameArea=regionsAreaMm2(frameRegions);
   const xy:XY[]=[],xyMap=new Map<string,number>(),raw:Triangle[]=[];
   function xyVertex(p:IntPoint,baseZ:number,terrainZ=baseZ):number {
     // Match floating shared intersections without re-rounding geometry to an integer lattice.
     const key=`${Math.round(p.X*1000)},${Math.round(p.Y*1000)}`;const found=xyMap.get(key);if(found!==undefined)return found;
-    const index=xy.length;xy.push({...p,baseZ:Math.max(base,baseZ),terrainZ:Math.max(base,terrainZ)});xyMap.set(key,index);return index;
+    const stable=(height:number)=>Math.abs(height-base)<=Math.max(3e-6,Math.abs(base)*2e-7)?base:Math.max(base,height);
+    const index=xy.length;xy.push({...p,baseZ:stable(baseZ),terrainZ:stable(terrainZ)});xyMap.set(key,index);return index;
   }
   function addRaw(ids:[number,number,number],kind:TopKind) {
     const area=cross(xy[ids[0]],xy[ids[1]],xy[ids[2]]);
@@ -145,7 +157,8 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
       triangulate(precisePartition([{outer:tri,holes:[]}],buffered.bufferedRegions,'difference'),'terrain',height,terrainHeight);
     }
   }
-  triangulate(frameRegions,'frame',()=>base);
+  triangulate(precisePartition(frameRegions,textLayout.regions,'difference'),'frame',()=>base);
+  triangulate(textLayout.regions,'text',()=>base);
 
   // Earcut may remove collinear input points. Inject every shared split point before closing walls.
   const bins=new Map<string,number[]>();
@@ -201,29 +214,44 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
       else throw new TerrainError('MESH_NUMERIC_UNSTABLE',`路线边界过近导致网格无法可靠构造（分区 ${face}），请减少过密路线点或调整线宽`);
     }
   }
+  // Partition first at full source precision. Only completed shared nodes that
+  // coincide in BOTH the original 1 micrometre weld and binary STL weld may
+  // share one XY identity before closing exterior and material walls.
+  const canonicalXY=new Map<string,number>();
+  const canonicalIds=xy.map((p,id)=>{
+    const key=[p.X/SCALE,p.Y/SCALE].flatMap(value=>[Math.round(value*1e6),Math.round(Math.fround(value)*1e6)]).join(',');
+    const found=canonicalXY.get(key);if(found!==undefined)return found;canonicalXY.set(key,id);return id;
+  });
+  const stableTriangles=noded.map(triangle=>({...triangle,ids:triangle.ids.map(id=>canonicalIds[id]) as [number,number,number]})).filter(triangle=>{
+    if(new Set(triangle.ids).size<3)return false;
+    if(triangle.kind!=='frame')return true;
+    // Noding can expose another phantom flat facet after earcut's initial check.
+    const points=triangle.ids.map(id=>({X:Math.fround(xy[id].X/SCALE),Y:Math.fround(xy[id].Y/SCALE)}));
+    return Math.abs(cross(points[0],points[1],points[2]))>1e-12;
+  });
   const positions:number[]=[],meshIndices:number[]=[],faceKinds:Kind[]=[],vertexMap=new Map<string,number>();
   const vertex=(id:number,height:number)=>{
     const p=xy[id],key=`${id},${Math.round(height*1e6)}`;const found=vertexMap.get(key);if(found!==undefined)return found;
     const index=positions.length/3;positions.push(p.X/SCALE,p.Y/SCALE,height);vertexMap.set(key,index);return index;
   };
   const face=(a:number,b:number,c:number,kind:Kind)=>{if(a===b||b===c||c===a)return;meshIndices.push(a,b,c);faceKinds.push(kind);if(faceKinds.length>MAX_MESH_TRIANGLES)throw new TerrainError('MESH_TOO_COMPLEX','一体模型超过 50 万三角面预算');};
-  const heightFor=(id:number,kind:TopKind)=>kind==='frame'?base:xy[id].baseZ+(kind==='route'?routeHeight:0);
+  const heightFor=(id:number,kind:TopKind)=>kind==='frame'?base:kind==='text'?base+TEXT_RELIEF_MM:xy[id].baseZ+(kind==='route'?routeHeight:0);
   const adjacency=new Map<string,Array<{a:number;b:number;kind:TopKind}>>();
   const levels=new Map<number,Set<number>>();
   const routeVertices=new Set<number>();let routeArea=0,terrainArea=0;
-  for(const triangle of noded) {
+  for(const triangle of stableTriangles) {
     const [a,b,c]=triangle.ids,kind=triangle.kind;
     for(const id of triangle.ids) {
-      const values=levels.get(id)??new Set<number>([0]);values.add(heightFor(id,kind));
+      const values=levels.get(id)??new Set<number>([0,base]);values.add(heightFor(id,kind));
       // A route-only boundary vertex still needs the bare DEM elevation so
       // exterior/frame walls can share a material seam below the relief.
       if(kind==='route')values.add(xy[id].baseZ);
-      if(snow&&kind!=='frame')values.add(xy[id].terrainZ);
+      if(snow&&kind!=='frame'&&kind!=='text')values.add(xy[id].terrainZ);
       levels.set(id,values);
     }
-    const emittedKind:Kind=snow&&kind==='terrain'&&triangle.ids.some(id=>xy[id].baseZ-xy[id].terrainZ>1e-8)?'snow':kind;
+    const emittedKind:Kind=snow&&kind==='terrain'&&triangle.ids.some(id=>xy[id].baseZ-xy[id].terrainZ>1e-8)?'snow':kind==='terrain'&&triangle.ids.every(id=>Math.abs(xy[id].baseZ-base)<1e-8)?'base':kind;
     face(vertex(a,heightFor(a,kind)),vertex(b,heightFor(b,kind)),vertex(c,heightFor(c,kind)),emittedKind);
-    face(vertex(a,0),vertex(c,0),vertex(b,0),'bottom');
+    face(vertex(a,0),vertex(c,0),vertex(b,0),'base');
     const area=cross(xy[a],xy[b],xy[c])/2/SCALE/SCALE;
     if(kind==='route'){routeArea+=area;for(const id of triangle.ids)routeVertices.add(id);}else if(kind==='terrain')terrainArea+=area;
     for(const [from,to] of [[a,b],[b,c],[c,a]]){const key=from<to?`${from},${to}`:`${to},${from}`;const list=adjacency.get(key)??[];list.push({a:from,b:to,kind});adjacency.set(key,list);}
@@ -239,7 +267,7 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
       if(difference<0){high=second;low=first;}else low=second;
     }
     const {a,b}=high,ha=heightFor(a,high.kind),hb=heightFor(b,high.kind),la=low?heightFor(a,low.kind):0,lb=low?heightFor(b,low.kind):0;
-    const kind:Kind=low&&((high.kind==='route'&&low.kind==='terrain')||(high.kind==='terrain'&&low.kind==='route'))?'route-wall':'wall';
+    const kind:Kind=high.kind==='text'?'text-wall':low&&((high.kind==='route'&&low.kind==='terrain')||(high.kind==='terrain'&&low.kind==='route'))?'route-wall':'wall';
     const wallBand=(la:number,lb:number,ha:number,hb:number,kind:Kind)=> {
       if(ha-la<1e-8&&hb-lb<1e-8)return;
       const levelsA=Array.from(levels.get(a)??[]).filter(z=>z>la+1e-6&&z<ha-1e-6).sort((a,b)=>b-a);
@@ -257,13 +285,14 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
     if(high.kind==='route'&&(!low||low.kind==='frame')) {
       // Split the visible wall at the original terrain plane, not at the
       // ledge/base height. Only the raised route strip receives route color.
-      if(snow){wallBand(la,lb,xy[a].terrainZ,xy[b].terrainZ,'wall');wallBand(xy[a].terrainZ,xy[b].terrainZ,xy[a].baseZ,xy[b].baseZ,'snow-wall');}
-      else wallBand(la,lb,xy[a].baseZ,xy[b].baseZ,'wall');
+      if(snow){wallBand(la,lb,Math.max(la,base),Math.max(lb,base),'base');wallBand(Math.max(la,base),Math.max(lb,base),xy[a].terrainZ,xy[b].terrainZ,'wall');wallBand(xy[a].terrainZ,xy[b].terrainZ,xy[a].baseZ,xy[b].baseZ,'snow-wall');}
+      else {wallBand(la,lb,Math.max(la,base),Math.max(lb,base),'base');wallBand(Math.max(la,base),Math.max(lb,base),xy[a].baseZ,xy[b].baseZ,'wall');}
       wallBand(xy[a].baseZ,xy[b].baseZ,ha,hb,'route-wall');
     } else if(snow&&high.kind==='terrain'&&(!low||low.kind==='frame')) {
-      wallBand(la,lb,xy[a].terrainZ,xy[b].terrainZ,'wall');wallBand(xy[a].terrainZ,xy[b].terrainZ,ha,hb,'snow-wall');
+      wallBand(la,lb,Math.max(la,base),Math.max(lb,base),'base');wallBand(Math.max(la,base),Math.max(lb,base),xy[a].terrainZ,xy[b].terrainZ,'wall');wallBand(xy[a].terrainZ,xy[b].terrainZ,ha,hb,'snow-wall');
     } else {
-      wallBand(la,lb,ha,hb,kind);
+      if(!low&&high.kind!=='text') {wallBand(la,lb,base,base,'base');wallBand(base,base,ha,hb,kind);}
+      else wallBand(la,lb,ha,hb,kind);
     }
   }
   const corridorPerimeter=corridor.paths.reduce((sum,path)=>sum+path.reduce((s,p,i)=>{const q=path[(i+1)%path.length];return s+Math.hypot(q.X-p.X,q.Y-p.Y)/SCALE;},0),0);
@@ -271,17 +300,17 @@ export function buildIntegratedTerrainMesh(input:IntegratedMeshRequest) {
   if(Math.abs(routeArea-corridor.areaMm2)>areaTolerance)throw new TerrainError('MESH_AREA_MISMATCH',`路线分区面积与走廊并集不一致（${routeArea} / ${corridor.areaMm2} mm²）`);
   const mesh:TerrainMeshPayload={positions,indices:meshIndices,faceKinds,minSurfaceZ:base,bottomZ:0,gridCols:source.gridCols,gridRows:source.gridRows};
   const surfaceCheck=checkIntegratedSurfaceHeights(source,snow?{...mesh,faceKinds:faceKinds.map(kind=>kind==='snow'?'terrain':kind)}:mesh,routeHeight);
+  mesh.materialParts=buildMaterialParts(xy.map(p=>({x:p.X/SCALE,y:p.Y/SCALE,terrainZ:p.terrainZ,surfaceZ:p.baseZ})),stableTriangles,routeHeight,base,input.signal);
   if(snow) {
-    mesh.materialParts=buildMaterialParts(xy.map(p=>({x:p.X/SCALE,y:p.Y/SCALE,terrainZ:p.terrainZ,surfaceZ:p.baseZ})),noded,routeHeight,base,input.signal);
     let snowArea=0,snowVolume=0;
-    for(const triangle of noded)if(triangle.kind!=='frame'&&triangle.ids.some(id=>xy[id].baseZ-xy[id].terrainZ>1e-8)) {
+    for(const triangle of noded)if(triangle.kind!=='frame'&&triangle.kind!=='text'&&triangle.ids.some(id=>xy[id].baseZ-xy[id].terrainZ>1e-8)) {
       const [a,b,c]=triangle.ids,area=cross(xy[a],xy[b],xy[c])/2/SCALE/SCALE;
       snowArea+=area;snowVolume+=area*triangle.ids.reduce((sum,id)=>sum+xy[id].baseZ-xy[id].terrainZ,0)/3;
     }
     snow.report.areaMm2=snowArea;snow.report.actualCoveragePercent=snowArea/(terrainArea+routeArea)*100;snow.report.volumeMm3=snowVolume;
   }
   return {mesh,report:{algorithm:'source-triangle-partition-with-shared-boundary-noding',coordinateToleranceMm:1/SCALE,affectedSourceTriangles,
-    surfaceCheck,route:{heightMm:routeHeight,widthMm:routeWidth,areaMm2:routeArea,corridorAreaMm2:corridor.areaMm2,areaErrorMm2:Math.abs(routeArea-corridor.areaMm2),areaToleranceMm2:areaTolerance,topVertexCount:routeVertices.size,maxHeightErrorMm:surfaceCheck.routeErrorMm,maxStlHeightErrorMm:surfaceCheck.routeStlErrorMm,segmentCount:corridor.effectiveSegmentCount,arcToleranceMm:corridor.arcToleranceMm},
-    frame:{widthMm:frameWidth,areaMm2:frameArea,topZMm:base,style:frameWidth?'flat-integral-ledge':'none'},terrainAreaMm2:terrainArea+routeArea,
-    expectedAddedVolumeMm3:routeArea*routeHeight+frameArea*base+(snow?.report.volumeMm3??0),snow:snow?.report??(input.snowEnabled?{enabled:true as const,requestedCoveragePercent:snowCoverage,actualCoveragePercent:0,coverageTolerancePercent:0.02,areaMm2:0,volumeMm3:0,maxThicknessMm:snowThickness,actualMaxThicknessMm:0,altitudeThresholdMm:source.minSurfaceZ,transitionElevationMm:0,transitionDistanceMm:0}:undefined),outerPathsMm:outerPaths.map(path=>path.map(p=>({x:p.X/SCALE,y:p.Y/SCALE})))}};
+    surfaceCheck,route:{enabled:routeEnabled,heightMm:routeHeight,widthMm:routeWidth,areaMm2:routeArea,corridorAreaMm2:corridor.areaMm2,areaErrorMm2:Math.abs(routeArea-corridor.areaMm2),areaToleranceMm2:areaTolerance,topVertexCount:routeVertices.size,maxHeightErrorMm:surfaceCheck.routeErrorMm,maxStlHeightErrorMm:surfaceCheck.routeStlErrorMm,segmentCount:corridor.effectiveSegmentCount,arcToleranceMm:corridor.arcToleranceMm},
+    baseText:{...textLayout.report,enabled:textEnabled,fontIdentity:effectiveText.baseTextFontIdentity},frame:{requestedWidthMm:requestedFrameWidth,widthMm:frameWidth,areaMm2:frameArea,topZMm:base,style:frameWidth?'flat-integral-ledge':'none'},terrainAreaMm2:terrainArea+routeArea,
+    expectedAddedVolumeMm3:routeArea*routeHeight+frameArea*base+textLayout.report.volumeMm3+(snow?.report.volumeMm3??0),snow:snow?.report??(input.snowEnabled?{enabled:true as const,requestedCoveragePercent:snowCoverage,actualCoveragePercent:0,coverageTolerancePercent:0.02,areaMm2:0,volumeMm3:0,maxThicknessMm:snowThickness,actualMaxThicknessMm:0,altitudeThresholdMm:source.minSurfaceZ,transitionElevationMm:0,transitionDistanceMm:0}:undefined),outerPathsMm:outerPaths.map(path=>path.map(p=>({x:p.X/SCALE,y:p.Y/SCALE})))}};
 }

@@ -15,7 +15,7 @@ const project = resolve(import.meta.dirname, '../..'), parent = join(project, 'a
 const coreModuleUrl = pathToFileURL(join(project, 'dist/src/index.js')).href;
 const gpx = '<gpx><trk><name>自动地表测试</name><trkseg><trkpt lat="30.56" lon="104.28"/><trkpt lat="30.57" lon="104.30"/></trkseg></trk></gpx>';
 const options = { gridColumns: 33, maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' };
-const scene = { id: 'S2A_48RWT_20260921_0_L2A', datetime: '2026-09-21T03:27:31Z', cloudCover: 1.5 };
+const scene = { id: 'S2A_48RWT_20260721_0_L2A', datetime: '2026-07-21T03:27:31Z', cloudCover: 1.5 };
 const delay = ms => new Promise(done => setTimeout(done, ms));
 async function waitFor(condition) {
   const until = Date.now() + 30000;
@@ -52,13 +52,21 @@ async function fixture(t, { realWorker = false, cache = true, provider = 'succes
   const controlledCore = join(root, 'network-fixture.mjs');
   await writeFile(controlledCore, `export * from ${JSON.stringify(coreModuleUrl)};
 import { loadColorGeoTiff } from ${JSON.stringify(coreModuleUrl)};
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 export async function loadSentinelColorImage(bounds, config) {
+  const cachePath = ${JSON.stringify(join(root, 'provider-cache.json'))};
+  if (config.offlineOnly) {
+    let cached; try { cached = JSON.parse(await readFile(cachePath, 'utf8')); } catch {}
+    if (!cached || JSON.stringify(cached.bounds) !== JSON.stringify(bounds) || cached.lookbackMonths !== config.lookbackMonths)
+      throw Object.assign(new Error('此取景尚无完整影像缓存'), { code: 'IMAGE_CACHE_MISS' });
+  } else {
   await writeFile(${JSON.stringify(marker)}, JSON.stringify({ bounds, cacheDir: config.cacheDir, offlineOnly: config.offlineOnly, lookbackMonths: config.lookbackMonths, signal: config.signal instanceof AbortSignal }));
   config.onProgress?.({ progress: 0.4, message: '正在筛除云层并获取 Sentinel-2 影像' });
   if (${JSON.stringify(provider)} === 'failure') throw Object.assign(new Error('取景内影像云层遮挡，请重试或切换本地导入'), { code: 'IMAGE_CLOUD_COVERAGE' });
   if (${JSON.stringify(provider)} === 'other-error') throw Object.assign(new Error('上次高程文件已改变，请重新选择'), { code: 'SESSION_INPUT_CHANGED' });
   if (${JSON.stringify(provider)} === 'slow') await new Promise(done => setTimeout(done, 5000));
+  if (${JSON.stringify(provider)} === 'success') await writeFile(cachePath, JSON.stringify({ bounds, lookbackMonths: config.lookbackMonths }));
+  }
   return { image: await loadColorGeoTiff(${JSON.stringify(imagePath)}), source: { provider: 'Sentinel-2', collection: 'sentinel-2-c1-l2a', scenes: [${JSON.stringify(scene)}], attribution: 'Contains modified Copernicus Sentinel data 2026', cacheHit: config.offlineOnly === true, retrievedAt: '2026-10-10T12:00:00Z', bounds: ${JSON.stringify(provider)} === 'wrong-bounds' ? { ...bounds, west: bounds.west - 1 } : bounds } };
 }
 `);
@@ -100,7 +108,7 @@ test('automatic imagery uses main-computed bounds and cache while ignoring any l
   assert.equal(request.imageLookbackMonths, 24);
   assert.deepEqual(request.bounds, inspection.bounds); assert.equal(request.imagePath, undefined); assert.equal(request.imageSha256, undefined);
   assert.equal(request.imageUrl, undefined); assert.equal(request.options.maxColors, undefined);
-  assert.equal(request.appearanceOptions.maxColors, 3);
+  assert.equal(request.appearanceOptions.maxColors, 6);
 });
 
 test('automatic imagery without a configured cache fails before starting a worker', async t => {
@@ -328,7 +336,7 @@ test('packaged runtime automatic-image check records scene dates and byte-identi
   const runStart = f.manager.start;
   // Runtime geometry is deliberately smaller while every model and export check remains real.
   f.manager.start = request => runStart({ ...request, options: { ...request.options, gridColumns: 33 } });
-  const report = await checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager,
+  const report = await checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager, coreModuleUrl,
     routePath: join(f.root, '路线.gpx'), demPath: join(project, 'data/copernicus-longquanshan.tif'),
     destination: join(f.root, 'runtime-evidence'), imageMode: 'auto' });
   assert.equal(report.passed, true); assert.ok(report.automaticSurface, 'Auto runtime check needs dedicated provenance and cache evidence');
@@ -344,7 +352,7 @@ test('packaged runtime none-image check ignores supplied imagery and exports uni
   const f = await fixture(t, { realWorker: true, cache: false });
   const runStart = f.manager.start;
   f.manager.start = request => runStart({ ...request, options: { ...request.options, gridColumns: 33 } });
-  const report = await checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager,
+  const report = await checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager, coreModuleUrl,
     routePath: join(f.root, '路线.gpx'), demPath: join(project, 'data/copernicus-longquanshan.tif'),
     imagePath: join(f.root, 'missing-ignored-image.tif'), destination: join(f.root, 'runtime-none-evidence'), imageMode: 'none' });
   assert.equal(report.passed, true); assert.equal(report.inputs.imageMode, 'none'); assert.equal(report.inputs.imagePath, undefined);
@@ -360,4 +368,43 @@ test('packaged runtime none-image check ignores supplied imagery and exports uni
   }
   const stored = JSON.parse(await readFile(join(f.root, 'runtime-none-evidence/runtime-check.json'), 'utf8'));
   assert.equal(stored.inputs.imageMode, 'none'); assert.equal(stored.inputs.imagePath, undefined); assert.equal(stored.color.classification, 'uniform');
+});
+
+
+const { writeZip: rebuildExportArchive } = await import('../../dist/src/export/zip.js');
+for (const [label, format, mutate, expectedError] of [
+  ['3MF assembly reference', '3mf', files => {
+    files.set('3D/3dmodel.model', Buffer.from(files.get('3D/3dmodel.model').toString('utf8').replace(/<component objectid="\d+"\/>/, '<component objectid="9999"/>')));
+  }, /3MF 装配/],
+  ['3MF part-local index', '3mf', files => {
+    files.set('3D/3dmodel.model', Buffer.from(files.get('3D/3dmodel.model').toString('utf8').replace(/<triangle v1="(\d+)"/, (_, value) => `<triangle v1="${Number(value) + 1}"`)));
+  }, /局部索引/],
+  ['3MF homogeneous material role', '3mf', files => {
+    files.set('3D/3dmodel.model', Buffer.from(files.get('3D/3dmodel.model').toString('utf8').replace(/(<triangle[^>]*?)pid="2"/, '$1pid="1"')));
+  }, /面材质/],
+  ['OBJ second-part global index', 'obj', files => {
+    let object = 0, changed = false;
+    const obj = files.get('model.obj').toString('utf8').split('\n').map(line => {
+      if (line.startsWith('o ')) object++;
+      if (object === 2 && line.startsWith('f ') && !changed) { changed = true; return line.replace(/^f (\d+)/, (_, value) => `f ${Number(value) - 1}`); }
+      return line;
+    }).join('\n');
+    assert.equal(changed, true, 'real OBJ needs a second material solid'); files.set('model.obj', Buffer.from(obj));
+  }, /全局索引/],
+  ['material-volume manifest', '3mf', files => {
+    const manifest = JSON.parse(files.get('Metadata/manifest.json')); manifest.materialVolumeMm3 += 1000;
+    files.set('Metadata/manifest.json', Buffer.from(JSON.stringify(manifest)));
+  }, /材料体积总和/],
+]) test(`runtime export validation rejects a corrupted ${label}`, async t => {
+  const f = await fixture(t, { realWorker: true, cache: false }), start = f.manager.start, exportModel = f.manager.exportModel;
+  f.manager.start = request => start({ ...request, options: { ...request.options, gridColumns: 33 } });
+  f.manager.exportModel = async (id, requestedFormat, options) => {
+    const exported = await exportModel(id, requestedFormat, options);
+    if (requestedFormat !== format) return exported;
+    const files = zipEntries(exported.bytes); mutate(files);
+    return { ...exported, bytes: rebuildExportArchive([...files].map(([name, data]) => ({ name, data }))) };
+  };
+  await assert.rejects(checkRuntime({ app: { isPackaged: true, getAppPath: () => project }, manager: f.manager, coreModuleUrl,
+    routePath: join(f.root, '路线.gpx'), demPath: join(project, 'data/copernicus-longquanshan.tif'),
+    destination: join(f.root, 'corrupt-runtime'), imageMode: 'none' }), expectedError);
 });

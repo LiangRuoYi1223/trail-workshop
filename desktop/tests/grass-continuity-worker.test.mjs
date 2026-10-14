@@ -7,6 +7,7 @@ import { inflateRawSync } from 'node:zlib';
 import test from 'node:test';
 import { writeArrayBuffer } from 'geotiff';
 import { createDesktopManager } from '../main/manager.mjs';
+import { classColor } from '../../dist/src/appearance/palette.js';
 
 const project = resolve(import.meta.dirname, '../..');
 const parent = join(project, 'artifacts', 'desktop-grass-continuity-worker-tests');
@@ -116,7 +117,7 @@ async function generate(manager, request) {
 }
 
 function assertProtectedClasses(mesh, classes) {
-  const expected = { route: 'route', 'route-wall': 'route', snow: 'snow', 'snow-wall': 'snow', frame: 'rock', wall: 'rock', bottom: 'rock' };
+  const expected = { route: 'route', 'route-wall': 'route', snow: 'snow', 'snow-wall': 'snow', base: 'base', text: 'text', 'text-wall': 'text', frame: 'base', wall: 'rock', bottom: 'base' };
   const seen = new Set();
   for (let face = 0; face < classes.length; face++) {
     const kind = mesh.faceKinds[face]; seen.add(kind);
@@ -136,12 +137,12 @@ function assertExportsMatchParts(files, format, preview) {
       const classes = [];
       for (const triangle of object[2].matchAll(/<triangle\b[^>]*p1="(\d+)"[^>]*p2="(\d+)"[^>]*p3="(\d+)"[^>]*\/>/g)) {
         assert.equal(triangle[1], triangle[2]); assert.equal(triangle[1], triangle[3]);
-        classes.push(manifest.appearance.palette[Number(triangle[1])].id);
+        classes.push(manifest.appearance.palette[Number(triangle[1])].color);
       }
       if (classes.length) exportedClasses.set(object[1], classes);
     }
   } else {
-    const palette = new Map(manifest.appearance.palette.map((entry, index) => [`palette_${index}`, entry.id]));
+    const palette = new Map(manifest.appearance.palette.map((entry, index) => [`palette_${index}`, entry.color]));
     let object, material;
     for (const line of files.get('model.obj').toString('utf8').split('\n')) {
       if (line.startsWith('o ')) { object = line.slice(2); exportedClasses.set(object, []); }
@@ -149,9 +150,9 @@ function assertExportsMatchParts(files, format, preview) {
       else if (line.startsWith('f ')) exportedClasses.get(object).push(material);
     }
   }
-  assert.deepEqual([...exportedClasses.keys()].sort(), ['route', 'snow', 'terrain']);
-  for (const part of preview.mesh.materialParts) assert.deepEqual(exportedClasses.get(part.id), part.faceClasses,
-    `${format} must preserve every generated ${part.id} face class, including filled gray holes`);
+  assert.deepEqual([...exportedClasses.keys()].sort(), ['base', 'route', 'snow', 'terrain']);
+  for (const part of preview.mesh.materialParts) assert.deepEqual(exportedClasses.get(part.id), part.faceClasses.map(kind => classColor(kind, preview.appearance.options)),
+    `${format} must preserve every generated ${part.id} face color, including filled gray holes and linked base colors`);
 }
 
 test('real snow worker fills small gray grass holes while preserving rock regions, geometry and exported material classes', { timeout: 180000 }, async t => {
@@ -183,7 +184,7 @@ test('real snow worker fills small gray grass holes while preserving rock region
   }
   assert.notEqual(highPreview.appearance.hash, lowPreview.appearance.hash);
   const seen = assertProtectedClasses(highPreview.mesh, highPreview.appearance.faceClasses);
-  for (const kind of ['route', 'route-wall', 'snow', 'snow-wall', 'wall', 'bottom']) assert.ok(seen.has(kind), `fixture must exercise ${kind}`);
+  for (const kind of ['route', 'route-wall', 'snow', 'snow-wall', 'wall', 'base']) assert.ok(seen.has(kind), `fixture must exercise ${kind}`);
   const core = await import(coreModuleUrl), loadedImage = await core.loadColorGeoTiff(f.imagePath);
   const mask = core.createGrassContinuityMask(highPreview.mesh, selection, loadedImage, 50, 100);
   let filledPartFaces = 0;

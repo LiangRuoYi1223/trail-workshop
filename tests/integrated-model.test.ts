@@ -87,8 +87,8 @@ function checkIntegrated(source: TerrainMeshPayload, result: ReturnType<typeof b
     const kind = mesh.faceKinds[face], area = xyArea(mesh, face);
     if (kind === 'route') routeArea += area;
     else if (kind === 'frame') frameArea += area;
-    else if (kind === 'terrain') terrainArea += area;
-    if (kind !== 'route' && kind !== 'terrain') continue;
+    else if (kind === 'terrain'||kind==='base'&&area>0) terrainArea += area;
+    if (kind !== 'route' && kind !== 'terrain'&&!(kind==='base'&&area>0)) continue;
     assert.ok(area > 0, `${kind} top must face upwards`);
     for (const vertex of mesh.indices.slice(face * 3, face * 3 + 3)) {
       const x = mesh.positions[vertex * 3]!, y = mesh.positions[vertex * 3 + 1]!, z = mesh.positions[vertex * 3 + 2]!;

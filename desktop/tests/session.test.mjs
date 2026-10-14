@@ -319,3 +319,29 @@ test('a redirected settings directory cannot read, replace or remove unrelated f
   const startup = await f.fresh().store.getSession(); assert.ok(startup.warnings.some(item => item.includes('目录已被替换')));
   assert.equal(await readFile(join(outside, 'session-v1.json'), 'utf8'), sentinel); assert.deepEqual(await readdir(outside), ['session-v1.json']);
 });
+
+
+test('base linked colors and top label survive restart without changing old choices',async t=>{
+ const f=await fixture(t);
+ const custom={...f.request.options,baseText:'格聂牧场 · 2026',baseTextSizeMm:3.5,baseColorSource:'grass',baseColor:'#102030',textColorSource:'custom',textColor:'#ff6600',maxColors:6};
+ await f.store.saveSession({...f.request,options:custom});await f.store.close();
+ const next=f.fresh(),startup=await next.store.getSession(),restored=await next.store.restoreSession();
+ for(const values of [startup.preferences.options,restored.options])for(const [key,value]of Object.entries(custom)){
+   if(!['center','groundWidthM'].includes(key))assert.deepEqual(values[key],value);
+ }
+ assert.equal(f.workerCount(),0);assert.deepEqual(restored.warnings,[]);
+});
+
+
+test('optional print roles survive restart with deselected text and remembered RGB values',async t=>{
+ const f=await fixture(t);
+ const options={...f.request.options,grassEnabled:false,rockEnabled:true,routeEnabled:false,textEnabled:false,
+   baseText:'格聂牧场',baseTextSizeMm:4,routeColor:'#112233',textColorSource:'custom',textColor:'#445566',maxColors:6};
+ await f.store.saveSession({...f.request,options});await f.store.close();
+ const next=f.fresh(),startup=await next.store.getSession(),restored=await next.store.restoreSession();
+ for(const actual of [startup.preferences.options,restored.options]){
+   assert.equal(actual.grassEnabled,false);assert.equal(actual.rockEnabled,true);assert.equal(actual.routeEnabled,false);assert.equal(actual.textEnabled,false);
+   assert.equal(actual.baseText,'格聂牧场');assert.equal(actual.baseTextSizeMm,4);assert.equal(actual.routeColor,'#112233');assert.equal(actual.textColor,'#445566');
+ }
+ assert.equal(f.workerCount(),0);assert.deepEqual(restored.warnings,[]);
+});

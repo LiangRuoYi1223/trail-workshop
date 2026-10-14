@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Preview, AppearanceOptions } from '../types';
-import { appearanceColor } from '../route-color';
+import { appearanceColor, previewPrintClasses } from '../route-color';
 
 export default function TerrainView({ preview, options }: { preview: Preview | null; options: AppearanceOptions }) {
   const container = useRef<HTMLDivElement>(null);
@@ -37,7 +37,7 @@ export default function TerrainView({ preview, options }: { preview: Preview | n
       const { positions, indices, faceKinds } = preview.mesh;
       const expanded = new Float32Array(indices.length * 3), colors = new Float32Array(indices.length * 3);
       const classes=preview.appearance?.faceClasses??preview.mesh.faceClasses??Array.from({length:indices.length/3},(_,i)=>faceKinds?.[i]==='route'||faceKinds?.[i]==='route-wall'?'route':faceKinds?.[i]==='snow'||faceKinds?.[i]==='snow-wall'?'snow':faceKinds?.[i]==='terrain'?'grass':'rock');
-      const colorPalette=(value:AppearanceOptions)=>Object.fromEntries(['grass','rock','snow','route'].map(role=>[role,new THREE.Color(appearanceColor(role,value))]));
+      const colorPalette=(value:AppearanceOptions)=>Object.fromEntries(['grass','rock','snow','route','base','text'].map(role=>[role,new THREE.Color(appearanceColor(role,value))]));
       const palette=colorPalette(options);
       for (let i = 0; i < indices.length; i++) {
         const source = indices[i] * 3, destination = i * 3;
@@ -124,14 +124,18 @@ export default function TerrainView({ preview, options }: { preview: Preview | n
       recolor.current = null;
     };
   }, [preview]);
-  useEffect(() => { recolor.current?.(options); }, [options.maxColors,options.grassColor,options.rockColor,options.routeColor]);
-  if (!preview) return <div className="workspace-empty"><h2>等待生成三维地形</h2><p>导入路线，检查地图取景和尺寸，再点击“生成模型”。</p><p className="empty-contract">山体、浮雕路线和底座组成统一闭合外形；开启积雪后，路线位于当地雪面上。</p></div>;
-  const hasSnow = (preview.appearance?.faceClasses ?? preview.mesh.faceClasses)?.includes('snow') || preview.mesh.faceKinds?.some(kind=>kind==='snow'||kind==='snow-wall');
+  useEffect(() => { recolor.current?.(options); }, [options.maxColors,options.grassEnabled,options.rockEnabled,options.grassColor,options.rockColor,options.routeColor,options.baseColorSource,options.baseColor,options.textColorSource,options.textColor]);
+  if (!preview) return <div className="workspace-empty"><h2>等待生成三维地形</h2><p>导入路线，检查地图取景和尺寸，再点击“生成模型”。</p><p className="empty-contract">按选中的部分生成闭合模型；开启积雪和路线后，路线位于当地雪面上。</p></div>;
+  const actualClasses = new Set(previewPrintClasses(preview));
+  const hasSnow = actualClasses.has('snow') || preview.mesh.faceKinds?.some(kind=>kind==='snow'||kind==='snow-wall');
+  const hasRoute = actualClasses.has('route') || preview.mesh.faceKinds?.some(kind=>kind==='route'||kind==='route-wall');
+  const hasText = actualClasses.has('text') || preview.mesh.faceKinds?.some(kind=>kind==='text'||kind==='text-wall');
+  const singleTerrain=options.grassEnabled===false||options.rockEnabled===false||options.grassEnabled===undefined&&options.rockEnabled===undefined&&options.maxColors===2;
   return <div className="terrain-view">
     <div ref={container} className="terrain-canvas" />
     {error ? <div role="alert" className="render-error">{error}</div> : <>
       <div className="view-actions"><button onClick={() => actions.current?.top()}>俯视</button><button onClick={() => actions.current?.reset()}>恢复视角</button></div>
-      <div className="view-caption"><span><i className="legend-dot" style={{background:options.grassColor}} />{options.maxColors===2?'山体':'草地'}</span>{options.maxColors!==2&&<span><i className="legend-dot" style={{background:options.rockColor}} />山石／底座</span>}{hasSnow&&<span><i className="legend-dot snow-dot" style={{background:'#ffffff'}} />白雪</span>}<span><i className="legend-dot route-dot" style={{background:options.routeColor}} />路线</span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
+      <div className="view-caption"><span><i className="legend-dot" style={{background:appearanceColor('grass',options)}} />{singleTerrain?'山体':'草地'}</span>{!singleTerrain&&<span><i className="legend-dot" style={{background:appearanceColor('rock',options)}} />山石</span>}{hasSnow&&<span><i className="legend-dot snow-dot" style={{background:'#ffffff'}} />白雪</span>}{hasRoute&&<span><i className="legend-dot route-dot" style={{background:options.routeColor}} />路线</span>}<span><i className="legend-dot" style={{background:appearanceColor('base',options)}} />底座</span>{hasText&&<span><i className="legend-dot" style={{background:appearanceColor('text',options)}} />文字</span>}<span>拖动旋转 · 滚轮缩放 · 右键平移</span></div>
     </>}
   </div>;
 }

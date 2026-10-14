@@ -12,7 +12,11 @@ export interface DemSampler {
   sample(lat: number, lon: number): number | null;
   metadata: object;
 }
+export interface BaseTextContour {outer:Array<{x:number;y:number}>;holes:Array<Array<{x:number;y:number}>>}
+export interface BaseTextFontIdentity {family:string;fileName:string;sha256:string}
 export interface PrintableTerrainOptions extends TerrainOptions {
+  routeEnabled?: boolean; textEnabled?: boolean;
+  baseText?:string; baseTextSizeMm?:number; baseTextContours?:BaseTextContour[]; baseTextFontIdentity?:BaseTextFontIdentity;
   routeWidthMm?: number; routeHeightMm?: number; frameWidthMm?: number;
   snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
 }

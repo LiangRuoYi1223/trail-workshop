@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { publicError } from './files.mjs';
+import { prepareBaseText } from './base-text-font.mjs';
 
 const electronPort = process.parentPort;
 if (electronPort) {
@@ -55,6 +56,10 @@ port.on('message', async event => {
     if (message.demMode === 'auto' && (typeof message.demCacheDir !== 'string' || !message.demCacheDir || typeof message.offlineOnly !== 'boolean' || !sameBounds(bounds))) {
       throw Object.assign(new Error('自动高程取景校验失败，请重新生成'), { code: 'DEM_REQUEST_INVALID' });
     }
+    const effectiveText = message.options.textEnabled === false ? '' : message.options.baseText ?? '';
+    const preparedText = message.options.textEnabled === false ? { contours: [] } : await prepareBaseText(effectiveText, message.options.baseTextSizeMm ?? 3);
+    controller.signal.throwIfAborted();
+    const modelOptions = {...message.options, baseTextContours: preparedText.contours, ...(preparedText.fontIdentity ? {baseTextFontIdentity: preparedText.fontIdentity} : {})};
     let image, imageSource, dem;
     send({ type: 'progress', phase: 'acquire', acquisition: structuredClone(acquisition), progress: 0.02,
       message: '正在并行读取高程与地表影像' });
@@ -132,7 +137,7 @@ port.on('message', async event => {
     const modelStart = automaticImage ? 0.54 : 0.36;
     send({ type: 'progress', phase: 'model', acquisition: structuredClone(acquisition), progress: modelStart, message: '地表影像与高程已就绪，正在生成模型' });
     const result = await core.generatePrintableTerrain({
-      gpxXml: message.gpxXml, fileName: message.fileName, options: message.options,
+      gpxXml: message.gpxXml, fileName: message.fileName, options: modelOptions,
       signal: controller.signal,
       loadDem: async modelBounds => {
         controller.signal.throwIfAborted();
@@ -163,6 +168,7 @@ port.on('message', async event => {
           message.grassSensitivity, grassContinuity, grassMask).faceClasses;
       }
       core.validateMaterialParts(result.mesh);
+      core.prepareMaterialParts(result.mesh, result.appearance);
     }
     core.validateModelAppearance(result.appearance, result.mesh.indices.length / 3);
     if (imageSource) result.report.imageSource = imageSource;

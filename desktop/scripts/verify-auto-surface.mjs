@@ -66,7 +66,7 @@ export async function loadSentinelColorImage(bounds, options) {
     options.onProgress?.({ stage: 'complete', progress: 1, message: '影像已就绪', downloadedBytes: 1572864, cacheBytes: 524288, requestCount: 3, coverage: 1 });
   }
   return { image: await loadColorGeoTiff(${JSON.stringify(imagePath)}), source: { provider: 'Sentinel-2', collection: 'sentinel-2-c1-l2a',
-    scenes: [{ id: 'S2_UI_SCENE_A', datetime: '2026-09-21T03:17:00Z', cloudCover: 4 }, { id: 'S2_UI_SCENE_B', datetime: '2026-09-26T03:18:00Z', cloudCover: 8 }],
+    scenes: [{ id: 'S2_UI_SCENE_A', datetime: '2026-07-21T03:17:00Z', cloudCover: 4 }, { id: 'S2_UI_SCENE_B', datetime: '2026-07-26T03:18:00Z', cloudCover: 8 }],
     cacheHit: control.cacheHit, retrievedAt: '2026-10-11T12:00:00Z', attribution: 'Contains modified Copernicus Sentinel data 2026', bounds } };
 }
 export async function loadCopernicusDem(bounds, options) {
@@ -127,7 +127,7 @@ export async function publishTerrainOutput(...args) {
   const finishGeneration = async label => { await wait(() => lastJob && lastJob.id !== finishedJobId && !['running', 'cancelling'].includes(lastJob.state), label); finishedJobId = lastJob.id; };
 
   await wait(() => ready('导入路线'), 'startup');
-  assert.deepEqual(await js("[...document.querySelector('#image-mode').options].map(option => option.textContent)"), ['不使用', '12个月', '24个月', '本地导入']);
+  assert.deepEqual(await js("[...document.querySelector('#image-mode').options].map(option => option.textContent)"), ['不使用', '最近一个夏季（6–8月）', '最近两个夏季（6–8月）', '本地导入']);
   assert.equal(await js("document.querySelector('#image-mode')?.value ?? null"), '24', 'fresh startup preserves the existing 24-month imagery horizon');
   assert.equal(await ready('选择地表影像'), false, 'local image picker must be available only in local mode');
   await click('导入路线'); await wait(() => ready('生成模型'), 'route imported');
@@ -149,7 +149,7 @@ export async function publishTerrainOutput(...args) {
   const preview = await manager.preview(lastJob.id);
   assert.equal(preview.report.imageSource.provider, 'Sentinel-2'); assert.equal(preview.appearance.classification, 'rgb-greenness');
   const displayed = await js("document.querySelector('.model-image-source')?.textContent ?? ''");
-  assert.match(displayed, /Sentinel-2/); assert.match(displayed, /2026-09-21/); assert.match(displayed, /2026-09-26/); assert.match(displayed, /在线获取/);
+  assert.match(displayed, /Sentinel-2/); assert.match(displayed, /2026-07-21/); assert.match(displayed, /2026-07-26/); assert.match(displayed, /在线获取/);
   await click('保存彩色 3MF'); await wait(() => saves.length === 1 && ready('保存彩色 3MF'), 'automatic color export');
   await js("(() => { const el = document.querySelector('#grass-color'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '#005522'); el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); })();");
   assert.equal(await ready('保存彩色 3MF'), true, 'palette edits must keep geometry exportable');

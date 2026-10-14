@@ -12,9 +12,9 @@ function chunk(type: string, data: Buffer): Buffer {
 
 /** Exact opaque RGB swatches. This reference image adds neither gradients nor extra colors. */
 export function writePalettePng(colors: readonly string[]): Buffer {
-  if (!colors.length || colors.length > 4 || colors.some(color => !/^#[0-9a-f]{6}$/i.test(color))
+  if (!colors.length || colors.length > 6 || colors.some(color => !/^#[0-9a-f]{6}$/i.test(color))
     || new Set(colors.map(color => color.toLowerCase())).size !== colors.length) {
-    throw new Error('调色板图片需要一至四种唯一 RGB 颜色');
+    throw new Error('调色板图片需要一至六种唯一 RGB 颜色');
   }
   const swatch = 16, width = colors.length * swatch, height = swatch;
   const rgb = colors.map(color => Buffer.from(color.slice(1), 'hex'));

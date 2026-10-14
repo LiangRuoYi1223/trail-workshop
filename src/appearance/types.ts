@@ -1,6 +1,9 @@
-export type FaceClass = 'grass' | 'rock' | 'snow' | 'route';
+export type FaceClass = 'grass' | 'rock' | 'snow' | 'route' | 'base' | 'text';
 export interface AppearanceOptions {
-  maxColors: 2 | 3 | 4;
+  maxColors: 1 | 2 | 3 | 4 | 5 | 6;
+  grassEnabled?: boolean; rockEnabled?: boolean;
+  baseColorSource?: 'grass'|'rock'|'custom'; baseColor?:string;
+  textColorSource?: 'route'|'custom'; textColor?:string;
   grassColor: string;
   rockColor: string;
   routeColor: string;
@@ -24,16 +27,12 @@ export interface ColorImage {
 export interface AppearanceMesh {
   positions: ArrayLike<number>;
   indices: ArrayLike<number>;
-  faceKinds?: ReadonlyArray<'terrain' | 'route' | 'route-wall' | 'snow' | 'snow-wall' | 'frame' | 'wall' | 'bottom'>;
+  faceKinds?: ReadonlyArray<'terrain' | 'route' | 'route-wall' | 'snow' | 'snow-wall' | 'frame' | 'wall' | 'bottom' | 'base' | 'text' | 'text-wall'>;
 }
 export interface AppearanceSelection {
   center: { lat: number; lon: number };
   bearingDeg: number;
   mmPerMeter: number;
-}
-/** Original-image rock cells selected for grass filling, queried in model millimetres. */
-export interface GrassContinuityMask {
-  shouldFill(xMm: number, yMm: number): boolean;
 }
 export interface ModelAppearance {
   schemaVersion: 1;
@@ -45,4 +44,8 @@ export interface ModelAppearance {
   /** RGB appearance classification is not precise land-cover identification. */
   classification: 'rgb-greenness' | 'uniform';
   hash: string;
+}
+
+export interface GrassContinuityMask {
+  shouldFill(xMm: number, yMm: number): boolean;
 }

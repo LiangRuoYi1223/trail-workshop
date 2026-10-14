@@ -24,7 +24,7 @@ const modelOptions = { shape: 'rectangle', widthMm: 60, heightMm: 60, groundWidt
   gridColumns: 17, baseThicknessMm: 2, routeWidthMm: 1, routeHeightMm: 1, frameWidthMm: 0, zExaggeration: 1 };
 const sourceUrl = 'https://e84-earth-search-sentinel-data.s3.us-west-2.amazonaws.com/sentinel-2-c1-l2a/local-transport-fixture/';
 const feature = { id: 'local-transport-fixture', collection: 'sentinel-2-c1-l2a', bbox: [2.99, -.01, 3.01, .01],
-  properties: { datetime: '2026-10-01T10:00:00Z', 'eo:cloud_cover': 0 },
+  properties: { datetime: '2026-07-01T10:00:00Z', 'eo:cloud_cover': 0 },
   assets: { visual: { href: sourceUrl + 'TCI.tif' }, scl: { href: sourceUrl + 'SCL.tif' } } };
 const geo = { GTModelTypeGeoKey: 1, ProjectedCSTypeGeoKey: 32631, GTRasterTypeGeoKey: 1, ModelTiepoint: [0, 0, 0, 500000, 40, 0] };
 const visual = Buffer.from(writeArrayBuffer(Uint8Array.from(Array.from({ length: 16 }, () => [30, 140, 40]).flat()),

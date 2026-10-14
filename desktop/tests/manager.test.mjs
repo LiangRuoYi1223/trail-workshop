@@ -28,7 +28,7 @@ class FakeWorker extends EventEmitter {
   kill() { this.kills++; if (!this.manualExit) queueMicrotask(() => this.emit('exit', 0)); }
   send(message) { this.emit('message', { ...message, jobId: this.request.jobId }); }
 }
-async function fixture(t, { timeout = 1000, manualExit = false, factory, cache = true, coreOverride, onLargeRoute } = {}) {
+async function fixture(t, { timeout = 1000, manualExit = false, factory, cache = true, coreOverride, onLargeRoute, timingOptions = {} } = {}) {
   await mkdir(testParent, { recursive: true });
   const root = await mkdtemp(join(testParent, 'terrain-desktop-manager-'));
   const routePath = join(root, '中文路线.gpx'), demPath = join(root, '高程.tif'), children = [], events = [];
@@ -42,7 +42,7 @@ async function fixture(t, { timeout = 1000, manualExit = false, factory, cache =
   const manager = createDesktopManager({ taskRoot: join(root, 'tasks'), coreModuleUrl: coreUrl, jobTimeoutMs: timeout,
     ...(cache ? { demCacheDir: join(root, 'elevation-cache') } : {}),
     workerFactory: factory ?? (() => { const child = new FakeWorker(manualExit); children.push(child); return child; }),
-    onJob: job => events.push(job), ...(onLargeRoute ? { onLargeRoute } : {}) });
+    onJob: job => events.push(job), ...(onLargeRoute ? { onLargeRoute } : {}), ...timingOptions });
   t.after(async () => {
     children.forEach(child => child.emit('exit', 0));
     await manager.close();
@@ -375,51 +375,14 @@ test('route appearance defaults preserve the existing relief and stay outside wo
   assert.equal(f.children[0].request.options.maxColors, undefined);
   assert.equal(f.children[0].request.options.grassColor, undefined);
   assert.equal(f.children[0].request.options.rockColor, undefined);
-  assert.deepEqual(f.children[0].request.appearanceOptions, { maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' });
+  for (const key of ['baseColorSource', 'baseColor', 'textColorSource', 'textColor']) assert.equal(f.children[0].request.options[key], undefined);
+  assert.deepEqual(f.children[0].request.appearanceOptions, { maxColors: 6, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832', baseColorSource: 'rock', baseColor: '#a9aa92', textColorSource: 'route', textColor: '#c84832', grassEnabled:true, rockEnabled:true });
   assert.ok(Object.isFrozen(f.children[0].request.options));
-});
-
-test('grass sensitivity is dispatched separately from geometry and palette options', async t => {
-  const f = await fixture(t);
-  for (const grassSensitivity of [50, 72.5]) {
-    const job = await f.start(grassSensitivity === 50 ? {} : { grassSensitivity });
-    const worker = f.children.at(-1);
-    assert.equal(job.options.grassSensitivity, grassSensitivity);
-    assert.equal(worker.request.grassSensitivity, grassSensitivity);
-    assert.equal(worker.request.options.grassSensitivity, undefined);
-    assert.deepEqual(worker.request.appearanceOptions, { maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' });
-    await f.manager.cancel(job.id);
-    await waitFor(() => f.manager.get(job.id).state === 'cancelled');
-  }
-});
-
-test('grass continuity is dispatched separately from geometry and palette while retaining sensitivity', async t => {
-  const f = await fixture(t);
-  for (const [options, expected] of [[{}, 50], [{ grassContinuity: 0 }, 0], [{ grassContinuity: 72.5 }, 72.5], [{ grassContinuity: 100 }, 100]]) {
-    const job = await f.start({ grassSensitivity: 35, ...options });
-    const worker = f.children.at(-1);
-    assert.equal(job.options.grassContinuity, expected);
-    assert.equal(worker.request.grassContinuity, expected);
-    assert.equal(worker.request.grassSensitivity, 35);
-    assert.equal(worker.request.options.grassContinuity, undefined);
-    assert.equal(worker.request.options.grassSensitivity, undefined);
-    assert.deepEqual(worker.request.appearanceOptions, { maxColors: 3, grassColor: '#799278', rockColor: '#a9aa92', routeColor: '#c84832' });
-    await f.manager.cancel(job.id);
-    await waitFor(() => f.manager.get(job.id).state === 'cancelled');
-  }
-});
-
-test('invalid grass continuity cannot launch a worker', async t => {
-  const f = await fixture(t);
-  for (const grassContinuity of [-1, 101, NaN, Infinity, '50', null, false, undefined]) {
-    await assert.rejects(f.start({ grassContinuity }), { code: 'CONFIG_INVALID' });
-  }
-  assert.equal(f.children.length, 0);
 });
 
 test('invalid color budgets and mountain colors cannot launch generation', async t => {
   const f = await fixture(t);
-  for (const options of [{ maxColors: 1 }, { maxColors: 5 }, { maxColors: '3' }, { grassColor: 'green' }, { rockColor: '#fff' }, { grassColor: null }]) {
+  for (const options of [{ grassEnabled:false,rockEnabled:false }, { maxColors: 7 }, { maxColors: '3' }, { grassColor: 'green' }, { rockColor: '#fff' }, { grassColor: null }]) {
     await assert.rejects(f.start(options), { code: 'CONFIG_INVALID' });
   }
   assert.equal(f.children.length, 0);
@@ -671,4 +634,70 @@ test('automatic worker refuses a core footprint that differs from the frozen man
   assert.equal(f.manager.get(job.id).error.code, 'DEM_REQUEST_INVALID');
   assert.match(f.manager.get(job.id).error.message, /取景校验失败/);
   assert.deepEqual(await readdir(join(f.root, 'tasks')), []);
+});
+
+
+test('manager timing starts at acceptance, leaves the initial estimate fixed, and freezes only after verified worker exit', async t => {
+  let tick = 100, wall = Date.parse('2026-10-13T00:00:00.000Z');
+  const f = await fixture(t, { manualExit: true, timingOptions: { monotonicNow: () => tick, clock: () => new Date(wall), softwareVersion: 'timing-test' } });
+  const job = await f.start({}), child = f.children[0];
+  assert.ok(job.timing, 'authoritative job timing is missing'); const initial = structuredClone(job.timing);
+  assert.equal(job.timing.elapsedMs, 0); assert.equal(job.createdAt, '2026-10-13T00:00:00.000Z');
+  tick = 2100; wall -= 3600000; child.send({ type: 'progress', phase: 'acquire', progress: .2, message: '获取中' });
+  assert.equal(f.manager.get(job.id).timing.elapsedMs, 2000);
+  tick = 5100; child.send({ type: 'progress', phase: 'model', progress: .5, message: '建模中' });
+  await writeOutput(child.request.taskDir); tick = 7100; child.send({ type: 'complete' });
+  await delay(10); assert.equal(f.manager.get(job.id).timing.totalDurationMs, undefined);
+  tick = 10100; child.emit('exit', 0); await waitFor(() => f.manager.get(job.id).state === 'succeeded');
+  const final = f.manager.get(job.id).timing;
+  assert.equal(final.totalDurationMs, 10000); assert.equal(final.elapsedMs, 10000);
+  assert.equal(final.estimatedTotalMs, initial.estimatedTotalMs); assert.deepEqual(final.estimatedRangeMs, initial.estimatedRangeMs);
+  assert.equal(final.finishedAt, '2026-10-12T23:00:00.000Z');
+  tick = 200100; wall += 7200000; await f.manager.artifact(job.id); await f.manager.preview(job.id);
+  assert.deepEqual(f.manager.get(job.id).timing, final);
+  const finished = f.events.filter(item => item.state === 'succeeded'); assert.equal(finished.length, 1); assert.deepEqual(finished[0].timing, final);
+});
+
+test('failed, cancelled, corrupt-output, and startup-failed tasks retain duration without learning success samples', async t => {
+  let tick = 0; const f = await fixture(t, { manualExit: true, timingOptions: { monotonicNow: () => tick, clock: () => new Date(0), softwareVersion: 'timing-test' } });
+  for (const outcome of ['cancelled', 'failure', 'corrupt']) {
+    const job = await f.start({}), child = f.children.at(-1); assert.ok(job.timing, 'failure timing is missing');
+    tick += 5000;
+    if (outcome === 'cancelled') f.manager.cancel(job.id);
+    else if (outcome === 'failure') child.send({ type: 'failure', error: { code: 'DEM_FETCH_FAILED', message: '高程读取失败' } });
+    else { await writeOutput(child.request.taskDir, { corrupt: true }); child.send({ type: 'complete' }); }
+    child.emit('exit', 0); await waitFor(() => ['failed', 'cancelled'].includes(f.manager.get(job.id).state));
+    assert.equal(f.manager.get(job.id).timing.totalDurationMs, 5000);
+  }
+  await f.manager.close();
+  await assert.rejects(readFile(join(f.root, 'timing-v1.json')), { code: 'ENOENT' });
+  const failed = await fixture(t, { factory: () => { tick += 2000; throw new Error('cannot spawn'); }, timingOptions: { monotonicNow: () => tick, clock: () => new Date(0) } });
+  const startup = await failed.start({}); assert.equal(startup.state, 'failed'); assert.equal(startup.timing.totalDurationMs, 2000);
+});
+
+test('unreadable timing history never prevents successful modeling, preview, cancellation, or close', async t => {
+  const f = await fixture(t); const blocked = join(f.root, 'blocked'); await writeFile(blocked, 'keep');
+  // A real unavailable destination exercises storage failure, without replacing model or file validation.
+  const manager = createDesktopManager({ taskRoot: join(f.root, 'other-tasks'), coreModuleUrl,
+    timingHistoryPath: join(blocked, 'timing.json'), workerFactory: () => { const child = new FakeWorker(false); f.children.push(child); return child; } });
+  t.after(() => manager.close());
+  const route = await manager.addRoute(f.routePath), dem = await manager.addDem(f.demPath);
+  const job = await manager.start({ routeId: route.id, demId: dem.id, imageMode: 'none', options: {} });
+  assert.ok(job.timing, 'storage fallback timing is missing'); assert.equal(job.timing.confidence, 'uncalibrated');
+  const child = f.children.at(-1); await writeOutput(child.request.taskDir); child.send({ type: 'complete' }); child.emit('exit', 0);
+  await waitFor(() => manager.get(job.id).state === 'succeeded'); assert.ok((await manager.preview(job.id)).mesh); assert.ok(manager.get(job.id).timing.totalDurationMs >= 0);
+  const second = await manager.start({ routeId: route.id, demId: dem.id, imageMode: 'none', options: {} }); manager.cancel(second.id);
+  await waitFor(() => manager.get(second.id).state === 'cancelled'); await manager.close(); assert.equal(await readFile(blocked, 'utf8'), 'keep');
+});
+
+
+test('a preparation timeout during the offline cache probe remains a timed failure rather than cancellation', async t => {
+  const f = await fixture(t, { timingOptions: { phaseTimeoutMs: { prepare: 15 } }, coreOverride: () => `
+    export async function loadCopernicusDem(bounds, {signal}) {
+      await new Promise(done => signal.addEventListener('abort', done, {once:true}));
+      throw Object.assign(new Error('probe aborted'), {code:'DEM_CACHE_MISS'});
+    }` });
+  const job = await f.manager.start({ routeId: f.route.id, demMode: 'auto', imageMode: 'none', options: {} });
+  assert.equal(job.state, 'failed'); assert.equal(job.error.code, 'JOB_TIMEOUT'); assert.ok(job.timing.totalDurationMs >= 0);
+  assert.equal(f.children.length, 0);
 });

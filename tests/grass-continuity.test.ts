@@ -86,7 +86,7 @@ test('continuity keeps original grass and protected geometry classes, including 
   const source = squareHole(.5), mask = createMask(squareMesh(), selection, source);
   const mesh = probeMesh(['terrain', 'route', 'route-wall', 'snow', 'snow-wall', 'frame', 'wall', 'bottom']);
   assert.deepEqual(build(mesh, selection, options, source, 50, 100, mask).faceClasses,
-    ['grass', 'grass', 'grass', 'route', 'route', 'snow', 'snow', 'rock', 'rock', 'rock']);
+    ['grass', 'grass', 'grass', 'route', 'route', 'snow', 'snow', 'base', 'rock', 'base']);
   const protectedOnly: AppearanceMesh = { positions: [0, 0, 0, 8, 0, 0, 0, 8, 0], indices: [0, 1, 2], faceKinds: ['route'] };
   assert.deepEqual(build(protectedOnly, selection, options, image(() => { throw new Error('protected image sampled'); }), 50, 100).faceClasses, ['route']);
 });

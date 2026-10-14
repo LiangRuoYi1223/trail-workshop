@@ -38,12 +38,12 @@ async function fixture(t) {
   return { ...first, request, fresh, sessionPath, workerCount: () => workers };
 }
 
-test('missing snow fields default to disabled snow without replacing an existing two-color choice', () => {
+test('missing snow fields migrate two-color projects to one selected terrain color', () => {
   const options = validateOptions({ maxColors: 2, widthMm: 150 });
   assert.equal(options.snowEnabled, false);
   assert.equal(options.snowCoveragePercent, 30);
   assert.equal(options.snowMaxThicknessMm, 1);
-  assert.equal(options.maxColors, 2);
+  assert.equal(options.maxColors, 6);assert.equal(options.rockEnabled,false);
   assert.equal(options.widthMm, 150);
 });
 
@@ -53,9 +53,9 @@ test('four-color snow accepts the boundary coverage and finished-model thickness
     assert.equal(options.snowEnabled, true);
     assert.equal(options.snowCoveragePercent, coverage);
     assert.equal(options.snowMaxThicknessMm, thickness);
-    assert.equal(options.maxColors, 4);
+    assert.equal(options.maxColors, 6);
   }
-  assert.equal(validateOptions({ maxColors: 4, snowEnabled: false }).maxColors, 4);
+  assert.equal(validateOptions({ maxColors: 4, snowEnabled: false }).maxColors, 6);
 });
 
 test('snow settings reject wrong types, non-finite values and values outside the supported ranges', () => {
@@ -66,9 +66,9 @@ test('snow settings reject wrong types, non-finite values and values outside the
   ]) assert.throws(() => validateOptions({ ...snowOptions, ...patch }), { code: 'CONFIG_INVALID' });
 });
 
-test('snow cannot be enabled under the legacy two-color or three-color budget', () => {
-  for (const maxColors of [2, 3]) assert.throws(() => validateOptions({ ...snowOptions, maxColors }), { code: 'CONFIG_INVALID' });
-  assert.throws(() => validateOptions({ ...snowOptions, maxColors: 5 }), { code: 'CONFIG_INVALID' });
+test('snow no longer requires the obsolete two-color or three-color budget', () => {
+  for (const maxColors of [2, 3]) assert.equal(validateOptions({ ...snowOptions, maxColors }).maxColors,6);
+  assert.throws(() => validateOptions({ ...snowOptions, maxColors: 7 }), { code: 'CONFIG_INVALID' });
 });
 
 test('snow changes invalidate generated geometry while four-color recoloring preserves it', () => {
@@ -95,17 +95,17 @@ test('snow options persist in preferences and the recent project then restore wi
   const stored = JSON.parse(await readFile(f.sessionPath, 'utf8'));
   for (const options of [stored.preferences.options, stored.recentProject.options]) {
     assert.equal(options.snowEnabled, true); assert.equal(options.snowCoveragePercent, 42.5);
-    assert.equal(options.snowMaxThicknessMm, 2.6); assert.equal(options.maxColors, 4);
+    assert.equal(options.snowMaxThicknessMm, 2.6); assert.equal(options.maxColors, 6);
   }
   const next = f.fresh(), startup = await next.store.getSession(), restored = await next.store.restoreSession();
   for (const options of [startup.preferences.options, restored.options]) {
     assert.equal(options.snowEnabled, true); assert.equal(options.snowCoveragePercent, 42.5);
-    assert.equal(options.snowMaxThicknessMm, 2.6); assert.equal(options.maxColors, 4);
+    assert.equal(options.snowMaxThicknessMm, 2.6); assert.equal(options.maxColors, 6);
   }
   assert.ok(restored.route); assert.deepEqual(restored.warnings, []); assert.equal(f.workerCount(), 0);
 });
 
-for (const maxColors of [2, 3]) test(`old ${maxColors}-color projects gain disabled snow defaults and keep their color choice`, async t => {
+for (const maxColors of [2, 3]) test(`old ${maxColors}-color projects gain snow defaults and preserve selected terrain roles`, async t => {
   const f = await fixture(t);
   await f.store.saveSession({ ...f.request, options: { widthMm: 150, maxColors } }); await f.store.close();
   const stored = JSON.parse(await readFile(f.sessionPath, 'utf8'));
@@ -117,7 +117,7 @@ for (const maxColors of [2, 3]) test(`old ${maxColors}-color projects gain disab
   const startup = await next.store.getSession(), restored = await next.store.restoreSession();
   for (const options of [startup.preferences.options, restored.options]) {
     assert.equal(options.snowEnabled, false); assert.equal(options.snowCoveragePercent, 30);
-    assert.equal(options.snowMaxThicknessMm, 1); assert.equal(options.maxColors, maxColors); assert.equal(options.widthMm, 150);
+    assert.equal(options.snowMaxThicknessMm, 1); assert.equal(options.maxColors, 6); assert.equal(options.rockEnabled,maxColors!==2); assert.equal(options.widthMm, 150);
   }
   assert.ok(restored.route); assert.deepEqual(restored.warnings, []);
   assert.deepEqual(await readFile(f.sessionPath), before); assert.equal(f.workerCount(), 0);
@@ -126,7 +126,7 @@ for (const maxColors of [2, 3]) test(`old ${maxColors}-color projects gain disab
 test('invalid snow edits leave the previous saved project intact', async t => {
   const f = await fixture(t); await f.store.saveSession(f.request);
   const before = await readFile(f.sessionPath);
-  for (const patch of [{ maxColors: 3 }, { snowCoveragePercent: 101 }, { snowMaxThicknessMm: 0 }, { snowEnabled: 'true' }]) {
+  for (const patch of [{ grassEnabled:false, rockEnabled:false }, { snowCoveragePercent: 101 }, { snowMaxThicknessMm: 0 }, { snowEnabled: 'true' }]) {
     await assert.rejects(f.store.saveSession({ ...f.request, options: { ...snowOptions, ...patch } }), { code: 'CONFIG_INVALID' });
   }
   assert.deepEqual(await readFile(f.sessionPath), before);

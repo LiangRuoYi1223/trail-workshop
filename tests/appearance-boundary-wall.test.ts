@@ -33,7 +33,7 @@ function assertExteriorBands(mesh:TerrainMeshPayload,heightAt:(x:number,y:number
       assert.ok(offsets.every(offset=>offset>=-1e-6 && offset<=relief+1e-6),'route color must cover only the exterior relief strip');
       routeWallArea+=triangleArea(points);
     } else {
-      assert.equal(kind,'wall');
+      if(kind==='base')assert.ok(points.every(point=>point[2]<=2+1e-6),'base color must stay below the exact base interface');else assert.equal(kind,'wall');
       assert.ok(offsets.every(offset=>offset<=1e-6),'mountain wall must stop at the underlying terrain, below the route relief');
     }
   }

@@ -19,11 +19,13 @@ export { loadColorGeoTiff } from './appearance/geotiff.js';
 export { loadSentinelColorImage } from './appearance/online.js';
 export type { SurfaceImageSource } from './appearance/online-types.js';
 export { buildModelAppearance, recolorModelAppearance } from './appearance/apply.js';
-export { createGrassContinuityMask } from './appearance/grass-continuity.js';
 export { validateAppearanceOptions, validateModelAppearance } from './appearance/palette.js';
 export { writeColor3mf } from './export/color-3mf.js';
 export { writeObjBundle } from './export/color-obj.js';
-export { validateMaterialParts } from './export/material-parts.js';
+export {validateMaterialParts,prepareMaterialParts} from './export/material-parts.js';
 export type { MaterialPart } from './vendor/trailprint/types.js';
-export type { AppearanceOptions, ModelAppearance, ColorImage, GrassContinuityMask } from './appearance/types.js';
-export type { TerrainOptions, PrintableTerrainOptions, DemSampler, GenerationResult, GenerationProgress } from './types.js';
+export type { AppearanceOptions, ModelAppearance, ColorImage } from './appearance/types.js';
+export type {BaseTextContour,BaseTextFontIdentity, TerrainOptions, PrintableTerrainOptions, DemSampler, GenerationResult, GenerationProgress } from './types.js';
+
+export { createGrassContinuityMask } from './appearance/grass-continuity.js';
+export type { GrassContinuityMask } from './appearance/types.js';

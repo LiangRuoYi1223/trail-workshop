@@ -3,13 +3,14 @@ import type { ImageMode, Job } from './types';
 export function failurePresentation(code: string, imageMode: ImageMode) {
   const imageRecovery = imageMode === 'auto' && code.startsWith('IMAGE_');
   const acquisitionRetry = code === 'ACQUISITION_TIMEOUT';
-  const status = imageRecovery ? '地表影像获取未完成，请重试或导入本地影像'
+  const summerCause=imageRecovery ? code==='IMAGE_COVERAGE_INSUFFICIENT'?'夏季覆盖不足，请重试或调整取景':code==='IMAGE_DOWNLOAD_LIMIT'?'下载额度耗尽，请重试复用已保存的数据块':code==='IMAGE_TIMEOUT'?'网络超时，请检查网络后重试':code==='IMAGE_NETWORK_FAILED'?'网络读取失败，请检查网络后重试':undefined : undefined;
+  const status = summerCause ?? (imageRecovery ? '地表影像获取未完成，请重试或导入本地影像'
     : acquisitionRetry ? '影像或高程获取超时，请检查网络后重试'
     : code === 'MODEL_TIMEOUT' ? '建模超时，请重新生成模型'
     : code === 'OUTPUT_TIMEOUT' ? '模型核验超时，请重新生成模型'
     : code === 'JOB_TIMEOUT' ? '生成超时，请重新生成模型'
     : code === 'INPUT_TOO_LARGE' ? '文件导入未完成，请检查文件大小'
-    : '生成未完成，请检查设置后重试';
+    : '生成未完成，请检查设置后重试');
   return { status, imageRecovery, acquisitionRetry };
 }
 
@@ -54,4 +55,28 @@ export function phaseLabel(phase: Job['phase']): string {
     : phase === 'acquire' ? '正在获取影像与高程'
     : phase === 'model' ? '正在建模'
     : phase === 'verify' ? '正在核验打印模型' : '正在生成模型';
+}
+
+type TimingPresentation = { estimatedTotalMs: number; estimatedRangeMs: { low: number; high: number }; confidence: 'uncalibrated' | 'reference' | 'calibrated' };
+export function durationLabel(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '计时中';
+  const total = Math.floor(durationMs / 1000), hours = Math.floor(total / 3600), minutes = Math.floor(total / 60) % 60, seconds = total % 60;
+  return hours ? `${hours} 小时 ${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
+    : minutes ? `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒` : `${seconds} 秒`;
+}
+export function elapsedDurationLabel(durationMs: number): string {
+  const label = durationLabel(durationMs); return label === '计时中' ? label : `已用 ${label}`;
+}
+function preciseDurationLabel(durationMs: number): string {
+  if (Number.isFinite(durationMs) && durationMs > 0 && durationMs < 10000) return `${Math.max(.1, Math.round(durationMs / 100) / 10)} 秒`;
+  return durationLabel(durationMs);
+}
+export function estimateLabel(timing: TimingPresentation | undefined): string {
+  if (!timing || !Number.isFinite(timing.estimatedTotalMs)) return '预计总用时待确认';
+  const status = timing.confidence === 'calibrated' ? '已校准' : timing.confidence === 'reference' ? '参考估计' : '未校准';
+  return `预计总用时 ${preciseDurationLabel(timing.estimatedTotalMs)}（参考 ${preciseDurationLabel(timing.estimatedRangeMs.low)}–${preciseDurationLabel(timing.estimatedRangeMs.high)}，${status}）`;
+}
+export function totalDurationLabel(timing: { totalDurationMs?: number } | undefined): string | undefined {
+  return timing?.totalDurationMs !== undefined && Number.isFinite(timing.totalDurationMs) && timing.totalDurationMs >= 0
+    ? `建模总用时 ${preciseDurationLabel(timing.totalDurationMs)}` : undefined;
 }

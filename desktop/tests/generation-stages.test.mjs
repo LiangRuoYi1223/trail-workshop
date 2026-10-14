@@ -21,7 +21,7 @@ class FakeWorker extends EventEmitter {
   send(message) { this.emit('message', { ...message, jobId: this.request.jobId }); }
   kill() { queueMicrotask(() => this.emit('exit', 0)); }
 }
-async function fixture(t, { real = false, behavior = 'barrier', phaseTimeoutMs, jobTimeoutMs } = {}) {
+async function fixture(t, { real = false, behavior = 'barrier', phaseTimeoutMs, jobTimeoutMs, modelOptions = {} } = {}) {
   await mkdir(parent, { recursive: true });
   const root = await mkdtemp(join(parent, 'case-')), tasks = join(root, 'tasks'), events = [], workers = [];
   const routePath = join(root, 'route.gpx'), imagePath = join(root, 'rgb.tif'), controlledCore = join(root, 'core.mjs');
@@ -48,6 +48,7 @@ async function pending(branch, signal) {
   });
 }
 export async function loadCopernicusDem(bounds, config) {
+  if (config.offlineOnly) throw Object.assign(new Error('此取景尚无高程缓存'), { code: 'DEM_CACHE_MISS' });
   appendFileSync(root + '/dem-calls', '1'); marker('dem-start');
   config.onProgress?.({ progress: 0.4, message: '高程读取中' });
   if (behavior.startsWith('image-failure') || behavior === 'pending') return pending('dem', config.signal);
@@ -55,6 +56,7 @@ export async function loadCopernicusDem(bounds, config) {
   return loadLocalDem(${JSON.stringify(join(project, 'data/copernicus-longquanshan.tif'))});
 }
 export async function loadSentinelColorImage(bounds, config) {
+  if (config.offlineOnly) throw Object.assign(new Error('此取景尚无影像缓存'), { code: 'IMAGE_CACHE_MISS' });
   marker('image-start');
   config.onProgress?.({ progress: 0.4, message: '影像读取中', stage: 'download', downloadedBytes: 4096, cacheBytes: 1024, requestCount: 2, coverage: 0.75 });
   if (behavior === 'dem-failure' || behavior === 'pending') return pending('image', config.signal);
@@ -83,7 +85,7 @@ export async function loadSentinelColorImage(bounds, config) {
     await manager.close(); assert.equal(dirname(root), parent); await rm(root, { recursive: true, force: true });
   });
   const route = await manager.addRoute(routePath);
-  const start = () => manager.start({ routeId: route.id, demMode: 'auto', imageMode: 'auto', options: { gridColumns: 33 } });
+  const start = () => manager.start({ routeId: route.id, demMode: 'auto', imageMode: 'auto', options: { gridColumns: 33, ...modelOptions } });
   return { root, tasks, manager, events, workers, start };
 }
 async function settled(f, id) {
@@ -171,4 +173,38 @@ test('cancelled concurrent acquisition cannot become a savable model', async t =
   const f = await fixture(t, { real: true, behavior: 'pending' }), job = await f.start();
   await waitFor(async () => readFile(join(f.root, 'dem-start')).then(() => true, () => false));
   f.manager.cancel(job.id); assert.equal((await settled(f, job.id)).state, 'cancelled'); await noResult(f, job.id);
+});
+
+
+
+test('unsupported base text fails before automatic acquisition starts',async t=>{
+ const f=await fixture(t,{real:true,modelOptions:{baseText:String.fromCodePoint(0x10ffff)}});
+ const initial=await f.start(),job=await settled(f,initial.id);
+ assert.equal(job.state,'failed');assert.equal(job.error.code,'CONFIG_BASE_TEXT_GLYPH');
+ await assert.rejects(readFile(join(f.root,'dem-start')),{code:'ENOENT'});
+ await assert.rejects(readFile(join(f.root,'image-start')),{code:'ENOENT'});
+});
+
+
+test('summer diagnostics preserve valid counters but redact unsafe scene paths and invalid retry counts',async t=>{
+ const f=await fixture(t),job=await f.start(),child=f.workers[0];
+ child.send({type:'progress',phase:'acquire',progress:.2,acquisition:{image:{state:'running',progress:.4,message:'补齐取景',retryCount:2,downloadBudgetBytes:512*1024*1024,reservedBytes:65536,catalogRequestCount:2,rangeRequestCount:8,attemptedScenes:4,sceneContribution:64,sceneId:'S2_SUMMER_A',sceneDate:'2026-07-21'}}});
+ const good=f.manager.get(job.id).acquisition.image;
+ assert.equal(good.retryCount,2);assert.equal(good.downloadBudgetBytes,512*1024*1024);assert.equal(good.reservedBytes,65536);assert.equal(good.sceneContribution,64);assert.equal(good.sceneId,'S2_SUMMER_A');
+ child.send({type:'progress',phase:'acquire',progress:.3,acquisition:{image:{state:'running',progress:.5,message:'补齐取景',retryCount:3,attemptedScenes:25,sceneId:'C:/private/scene',sceneDate:'https://secret.example/'}}});
+ const bad=f.manager.get(job.id).acquisition.image;
+ for(const field of ['retryCount','attemptedScenes','sceneId','sceneDate'])assert.equal(bad[field],undefined);
+ f.manager.cancel(job.id);await settled(f,job.id);
+});
+
+
+test('deselected text skips missing glyph preparation and retains its saved input',async t=>{
+ const f=await fixture(t,{real:true,modelOptions:{baseText:'😀',textEnabled:false,routeEnabled:false,grassEnabled:false,rockEnabled:true}});
+ const initial=await f.start(),result=await settled(f,initial.id);
+ assert.equal(result.state,'succeeded',JSON.stringify(result.error));
+ const preview=await f.manager.preview(initial.id);
+ assert.equal(preview.report.integratedModel.baseText.text,'');
+ assert.equal(preview.report.integratedModel.baseText.effectiveFrameWidthMm,3);
+ assert.ok(!preview.mesh.materialParts.some(part=>part.id==='text'||part.id==='route'));
+ assert.equal(await readFile(join(f.root,'dem-calls'),'utf8'),'1');
 });

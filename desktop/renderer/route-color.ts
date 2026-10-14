@@ -27,15 +27,72 @@ export function hsvToRgb({ h, s, v }: Hsv): Rgb {
 export function wheelColor(x: number, y: number, value: number): string {
   return rgbToHex(hsvToRgb({ h:(Math.atan2(-y,x)*180/Math.PI+360)%360, s:Math.min(1,Math.hypot(x,y)), v:value }));
 }
-export function geometryOptions<T extends { routeColor?: string; grassColor?:string; rockColor?:string; maxColors?:number }>(options: T): Omit<T,'routeColor'|'grassColor'|'rockColor'|'maxColors'> {
-  const { routeColor, grassColor, rockColor, maxColors, ...geometry } = options;
+export type PrintRole = 'grass'|'rock'|'snow'|'route'|'base'|'text';
+export interface PrintColors {
+  maxColors:1|2|3|4|5|6; grassColor:string; rockColor:string; routeColor:string;
+  grassEnabled?:boolean; rockEnabled?:boolean;
+  baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string;
+  textColorSource?:'route'|'custom'; textColor?:string;
+}
+export interface PrintRoleOptions extends PrintColors { routeEnabled?:boolean; textEnabled?:boolean; snowEnabled?:boolean; baseText?:string }
+export function geometryOptions<T extends Partial<PrintColors>>(options:T):Omit<T,keyof PrintColors> {
+  const {routeColor,grassColor,rockColor,maxColors,grassEnabled,rockEnabled,baseColorSource,baseColor,textColorSource,textColor,...geometry}=options;
   return geometry;
 }
-export interface PrintColors { maxColors:2|3|4; grassColor:string; rockColor:string; routeColor:string }
+export function appearanceOptions(options:PrintColors):PrintColors {
+  const {maxColors,grassColor,rockColor,routeColor,grassEnabled,rockEnabled,baseColorSource,baseColor,textColorSource,textColor}=options;
+  return {maxColors,grassColor,rockColor,routeColor,...(grassEnabled===undefined?{}:{grassEnabled}),...(rockEnabled===undefined?{}:{rockEnabled}),baseColorSource,baseColor,textColorSource,textColor};
+}
 export function appearanceColor(faceClass:string, options:PrintColors):string {
-  if (faceClass==='snow') return '#ffffff';
-  return faceClass==='route' ? options.routeColor : faceClass==='grass' || options.maxColors===2 ? options.grassColor : options.rockColor;
+  const singleGrass=options.rockEnabled===false || (options.grassEnabled===undefined && options.rockEnabled===undefined && options.maxColors===2);
+  const terrain=(role:'grass'|'rock')=>options.grassEnabled===false?options.rockColor:singleGrass?options.grassColor:role==='grass'?options.grassColor:options.rockColor;
+  if(faceClass==='snow')return '#ffffff';
+  if(faceClass==='text')return options.textColorSource==='custom' ? options.textColor??options.routeColor : options.routeColor;
+  if(faceClass==='base')return options.baseColorSource==='custom' ? options.baseColor??terrain('rock') : terrain(options.baseColorSource==='grass'?'grass':'rock');
+  return faceClass==='route' ? options.routeColor : terrain(faceClass==='grass'?'grass':'rock');
 }
 export function printPaletteCount(classes:readonly string[],options:PrintColors):number {
   return new Set(classes.map(role=>appearanceColor(role,options).toLowerCase())).size;
+}
+export function printRoleEnabled(options:PrintRoleOptions,role:PrintRole):boolean {
+  if(role==='base')return true;
+  if(role==='snow')return options.snowEnabled??false;
+  if(role==='text')return options.textEnabled??!!options.baseText;
+  return options[(role+'Enabled') as 'grassEnabled'|'rockEnabled'|'routeEnabled']??true;
+}
+export function togglePrintRole<T extends PrintRoleOptions>(options:T,role:PrintRole,enabled:boolean):T {
+  if(role==='base' || (!enabled && role==='grass' && !printRoleEnabled(options,'rock')) || (!enabled && role==='rock' && !printRoleEnabled(options,'grass')))return options;
+  return {...options,[role+'Enabled']:enabled};
+}
+export function editablePrintColor(options:PrintColors,role:PrintRole):string {
+  return role==='grass'?options.grassColor:role==='rock'?options.rockColor:appearanceColor(role,options);
+}
+export function editPrintColor<T extends PrintColors>(options:T,role:PrintRole,value:string):T {
+  if(role==='snow')return options;
+  hexToRgb(value);
+  return {...options,[role+'Color']:value,...(role==='base'?{baseColorSource:'custom'}:role==='text'?{textColorSource:'custom'}:{})};
+}
+export function reusePrintColor<T extends PrintColors>(options:T,target:PrintRole,source:PrintRole):T {
+  if(target==='snow' || target===source)return options;
+  if(target==='base' && (source==='grass'||source==='rock'))return {...options,baseColorSource:source};
+  if(target==='text' && source==='route')return {...options,textColorSource:'route'};
+  return editPrintColor(options,target,appearanceColor(source,options));
+}
+export function plannedPrintPaletteCount(options:PrintRoleOptions):number {
+  const roles:PrintRole[]=['grass','rock','snow','route','base','text'];
+  return printPaletteCount(roles.filter(role=>printRoleEnabled(options,role)&&(role!=='text'||!!options.baseText?.trim())),options);
+}
+
+export function previewPrintClasses(preview:{appearance?:{faceClasses:readonly PrintRole[]};mesh:{faceClasses?:readonly PrintRole[];faceKinds?:readonly string[];materialParts?:readonly {id:string;indices:readonly number[];faceClasses?:readonly PrintRole[]}[]}}):PrintRole[] {
+  const classes=new Set<PrintRole>();
+  const outerClasses=preview.appearance?.faceClasses??preview.mesh.faceClasses??[];
+  for(const role of outerClasses)classes.add(role);
+  if(!classes.size)for(const kind of preview.mesh.faceKinds??[])classes.add(kind==='terrain'?'grass':kind.startsWith('route')?'route':kind.startsWith('snow')?'snow':kind.startsWith('text')?'text':kind.startsWith('base')?'base':'rock');
+  for(const part of preview.mesh.materialParts??[]) {
+    if(!part.indices.length)continue;
+    if(part.faceClasses?.length)for(const role of part.faceClasses)classes.add(role);
+    else if(part.id==='terrain')classes.add('rock');
+    else if(['snow','route','base','text'].includes(part.id))classes.add(part.id as PrintRole);
+  }
+  return Array.from(classes);
 }

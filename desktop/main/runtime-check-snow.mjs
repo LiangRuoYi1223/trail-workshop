@@ -23,7 +23,7 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
   const output = resolve(destination); await mkdir(output, {recursive:true});
   const runtime = {packaged:app.isPackaged, version:app.getVersion(), applicationRoot:app.getAppPath(), platform:process.platform};
   try {
-    assert.equal(runtime.packaged, true); assert.equal(runtime.version, '0.4.7');
+    assert.equal(runtime.packaged, true); assert.equal(runtime.version, '0.4.6');
     const core = await import(pathToFileURL(join(app.getAppPath(), 'core/index.js')).href);
     const route = await manager.addRoute(resolve(routePath)), dem = await manager.addDem(resolve(demPath));
     const image = imagePath ? await manager.addImage(resolve(imagePath)) : undefined;
@@ -39,7 +39,8 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
     }
     const job = manager.get(task.id); assert.equal(job.state, 'succeeded', JSON.stringify(job.error));
     const preview = await manager.preview(task.id), materials = core.validateMaterialParts(preview.mesh);
-    assert.deepEqual(materials.parts.map(part=>part.id).sort(), ['route','snow','terrain']);
+    const materialIds = materials.parts.map(part=>part.id).sort();
+    assert.deepEqual(materialIds, ['base','route','snow','terrain']);
     assert.equal(materials.outer.connectedComponents,1);
     assert.ok(Math.abs(preview.report.snow.actualCoveragePercent-30)<=0.02);
     const formats = [];
@@ -51,16 +52,19 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
       assert.equal(createHash('sha256').update(bytes).digest('hex'), saved.sha256);
       if (format==='3mf') {
         const files=unzip(bytes), xml=files.get('3D/3dmodel.model').toString('utf8');
-        assert.equal((xml.match(/<mesh>/g)??[]).length,3); assert.match(xml, /<components>/);
+        assert.equal((xml.match(/<mesh>/g)??[]).length,materialIds.length); assert.match(xml, /<components>/);
         assert.match(xml,/displaycolor="#ffffffff"/i);
       } else if(format==='obj') {
         const files=unzip(bytes);
-        assert.deepEqual((files.get('model.obj').toString('utf8').match(/^o .+$/gm)??[]).sort(),['o route','o snow','o terrain']);
+        assert.deepEqual((files.get('model.obj').toString('utf8').match(/^o .+$/gm)??[]).sort(),materialIds.map(id=>'o '+id));
         assert.match(files.get('model.mtl').toString('utf8'), /Kd 0 0\.3333333333333333 1/);
       } else assert.equal(saved.sha256, job.result.stlSha256);
       formats.push({format,...saved});
     }
-    await assert.rejects(manager.exportModel(task.id,'3mf',{...colors,maxColors:3}),{code:'CONFIG_INVALID'});
+    const monochrome=await manager.exportModel(task.id,'3mf',{...colors,maxColors:1,grassEnabled:false,rockEnabled:true,rockColor:'#ffffff',routeColor:'#ffffff',baseColorSource:'rock'});
+    const monoFiles=unzip(monochrome.bytes),monoXml=monoFiles.get('3D/3dmodel.model').toString('utf8');
+    assert.equal((monoXml.match(/<m:color /g)??[]).length,1);assert.match(monoXml,/displaycolor="#ffffffff"/i);
+    assert.equal((monoXml.match(/<mesh>/g)??[]).length,materials.parts.length);
     const result={passed:true,runtime,job,saved:formats.find(value=>value.format==='stl'),snow:preview.report.snow,validation:preview.report.validation,materials,formats};
     await writeFile(join(output,'runtime-check.json'),JSON.stringify(result,null,2)); return result;
   } catch(error) {

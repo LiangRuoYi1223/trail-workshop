@@ -82,3 +82,38 @@ test('phase names make acquisition, model generation and verification distinct',
   assert.match(ui.phaseLabel('prepare'), /准备/);
   assert.equal(ui.phaseLabel(undefined), '正在生成模型');
 });
+
+test('initial estimates show the uncalibrated range and keep reference and calibrated labels distinct', () => {
+  assert.equal(typeof ui.estimateLabel, 'function', 'estimated duration presentation is missing');
+  const estimate = { estimatedTotalMs: 65000, estimatedRangeMs: { low: 45000, high: 120000 }, confidence: 'uncalibrated', estimateVersion: 'test-v1', elapsedMs: 0 };
+  assert.equal(ui.estimateLabel(estimate), '预计总用时 1 分 05 秒（参考 45 秒–2 分 00 秒，未校准）');
+  assert.match(ui.estimateLabel({ ...estimate, confidence: 'reference' }), /参考估计/);
+  assert.match(ui.estimateLabel({ ...estimate, confidence: 'calibrated' }), /已校准/);
+  assert.equal(ui.estimateLabel(undefined), '预计总用时待确认');
+});
+
+test('successful total duration stays frozen and elapsed duration accepts monotonic snapshots', () => {
+  assert.equal(typeof ui.totalDurationLabel, 'function', 'final duration presentation is missing');
+  assert.equal(typeof ui.elapsedDurationLabel, 'function', 'monotonic elapsed presentation is missing');
+  assert.equal(ui.totalDurationLabel({ totalDurationMs: 65000 }), '建模总用时 1 分 05 秒');
+  assert.equal(ui.elapsedDurationLabel(65000), '已用 1 分 05 秒');
+  assert.equal(ui.elapsedDurationLabel(-1), '计时中');
+  assert.equal(ui.totalDurationLabel(undefined), undefined);
+});
+
+test('short initial estimates and frozen totals retain tenths of seconds while elapsed labels keep whole seconds', () => {
+  const timing = { estimatedTotalMs: 1064, estimatedRangeMs: { low: 940, high: 1200 }, confidence: 'calibrated', estimateVersion: 'test-v1' };
+  assert.equal(ui.estimateLabel(timing), '预计总用时 1.1 秒（参考 0.9 秒–1.2 秒，已校准）');
+  assert.equal(ui.totalDurationLabel({ totalDurationMs: 1064 }), '建模总用时 1.1 秒');
+  assert.equal(ui.totalDurationLabel({ totalDurationMs: 49 }), '建模总用时 0.1 秒');
+  assert.equal(ui.elapsedDurationLabel(1064), '已用 1 秒');
+  assert.equal(ui.durationLabel(1064), '1 秒');
+});
+
+
+test('summer coverage, cumulative quota and timeout report distinct causes',()=>{
+ assert.match(ui.failurePresentation('IMAGE_COVERAGE_INSUFFICIENT','auto').status,/夏季覆盖不足/);
+ assert.match(ui.failurePresentation('IMAGE_DOWNLOAD_LIMIT','auto').status,/下载额度耗尽/);
+ assert.match(ui.failurePresentation('IMAGE_TIMEOUT','auto').status,/网络超时/);
+ assert.doesNotMatch(ui.failurePresentation('IMAGE_RANGE_LIMIT','auto').status,/额度耗尽/);
+});

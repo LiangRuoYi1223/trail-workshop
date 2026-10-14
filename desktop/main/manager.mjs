@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
+import { createJobTiming, createTimingHistory, probeTimingCache, timingFeatures } from './timing.mjs';
 import { DesktopError, checkedInput, publicError, removeOwnedTask, validateOptions, verifyOutput } from './files.mjs';
 import { LARGE_ROUTE_WARNING_BYTES, MAX_ROUTE_BYTES } from './route-limits.mjs';
 
@@ -12,16 +14,21 @@ const MAX_EXPORT_BYTES = 100 * 1024 * 1024;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const copy = value => structuredClone(value);
 const downloadName = (name, extension = '.stl') => `${String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || '徒步地形'}_一体地形${extension}`;
-const appearanceOptions = ({ maxColors, grassColor, rockColor, routeColor }) => Object.freeze({ maxColors, grassColor, rockColor, routeColor });
+const appearanceOptions = ({ maxColors, grassColor, rockColor, routeColor, baseColorSource, baseColor, textColorSource, textColor, grassEnabled, rockEnabled }) => Object.freeze({ maxColors, grassColor, rockColor, routeColor, baseColorSource, baseColor, textColorSource, textColor, grassEnabled, rockEnabled });
 const phases = ['prepare', 'acquire', 'model', 'verify'];
-const defaultPhaseTimeoutMs = Object.freeze({ prepare: 30000, acquire: 180000, model: 180000, verify: 60000 });
+const defaultPhaseTimeoutMs = Object.freeze({ prepare: 30000, acquire: 660000, model: 180000, verify: 60000 });
 function checkedPhaseProgress(value) {
   if (!value || !['running', 'complete'].includes(value.state) || !Number.isFinite(value.progress)
     || value.progress < 0 || value.progress > 1 || typeof value.message !== 'string') return undefined;
   const progress = { state: value.state, progress: value.progress, message: value.message.slice(0, 200) };
-  for (const field of ['downloadedBytes', 'cacheBytes', 'requestCount']) {
+  for (const field of ['downloadedBytes', 'cacheBytes', 'requestCount', 'catalogRequestCount', 'rangeRequestCount', 'downloadBudgetBytes', 'reservedBytes', 'sceneContribution']) {
     if (Number.isSafeInteger(value[field]) && value[field] >= 0) progress[field] = value[field];
   }
+  for (const [field,maximum] of [['retryCount',2],['attemptedScenes',24]]) {
+    if (Number.isSafeInteger(value[field]) && value[field]>=0 && value[field]<=maximum) progress[field]=value[field];
+  }
+  if (safeSourceText(value.sceneId)) progress.sceneId=safeSourceText(value.sceneId);
+  if (typeof value.sceneDate==='string' && /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$/.test(value.sceneDate) && Number.isFinite(Date.parse(value.sceneDate))) progress.sceneDate=value.sceneDate;
   if (Number.isFinite(value.coverage) && value.coverage >= 0 && value.coverage <= 1) progress.coverage = value.coverage;
   if (['query', 'download', 'cloud', 'complete'].includes(value.stage)) progress.stage = value.stage;
   return progress;
@@ -52,21 +59,24 @@ function checkedImageSource(source, bounds) {
     ...(source.attribution ? { attribution: source.attribution } : {}) };
 }
 
-export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, demCacheDir, imageCacheDir, onJob = () => {}, onLargeRoute = async () => {}, jobTimeoutMs, phaseTimeoutMs = {} }) {
+export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, demCacheDir, imageCacheDir, onJob = () => {}, onLargeRoute = async () => {}, jobTimeoutMs, phaseTimeoutMs = {}, timingHistoryPath, monotonicNow = () => performance.now(), clock = () => new Date(), softwareVersion = 'development' }) {
   if (typeof taskRoot !== 'string' || !taskRoot || typeof coreModuleUrl !== 'string' || !coreModuleUrl.startsWith('file:')
     || typeof workerFactory !== 'function' || (jobTimeoutMs !== undefined && (!Number.isFinite(jobTimeoutMs) || jobTimeoutMs <= 0))
     || !phaseTimeoutMs || typeof phaseTimeoutMs !== 'object' || Array.isArray(phaseTimeoutMs)
     || Object.entries(phaseTimeoutMs).some(([phase, timeout]) => !phases.includes(phase) || !Number.isFinite(timeout) || timeout <= 0 || timeout > 2147483647)
-    || [demCacheDir, imageCacheDir].some(directory => directory !== undefined && (typeof directory !== 'string' || !directory || directory.includes('\0')))) throw new DesktopError('CONFIG_INVALID', '桌面任务配置无效');
+    || typeof monotonicNow !== 'function' || typeof clock !== 'function' || typeof softwareVersion !== 'string' || !softwareVersion || softwareVersion.length > 100
+    || [demCacheDir, imageCacheDir, timingHistoryPath].some(directory => directory !== undefined && (typeof directory !== 'string' || !directory || directory.includes('\0')))) throw new DesktopError('CONFIG_INVALID', '桌面任务配置无效');
   const timeouts = { ...defaultPhaseTimeoutMs, ...phaseTimeoutMs };
   const root = resolve(taskRoot), cacheDir = demCacheDir === undefined ? undefined : resolve(demCacheDir),
     surfaceCacheDir = imageCacheDir === undefined ? undefined : resolve(imageCacheDir), corePromise = import(coreModuleUrl);
   corePromise.catch(() => {});
+  const timingHistory = createTimingHistory({ path: timingHistoryPath ?? join(dirname(root), 'timing-v1.json'), softwareVersion });
   const workerPath = fileURLToPath(new URL('./worker.mjs', import.meta.url));
   const routes = new Map(), dems = new Map(), images = new Map(), jobs = new Map();
   let active, closed = false, pruning = Promise.resolve();
   const ensureOpen = () => { if (closed) throw new DesktopError('APP_CLOSED', '软件正在退出'); };
-  const emit = job => { try { onJob(copy(job.public)); } catch { /* UI observers cannot change task ownership. */ } };
+  const publicJob = job => { if (job.timing) job.public.timing = job.timing.snapshot(); return copy(job.public); };
+  const emit = job => { try { onJob(publicJob(job)); } catch { /* UI observers cannot change task ownership. */ } };
   const find = id => {
     const job = jobs.get(id);
     if (!job) throw new DesktopError('JOB_NOT_FOUND', '找不到该生成任务，请重新生成');
@@ -79,10 +89,26 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
   const finish = async (job, state, error) => {
     if (job.finished) return;
     job.finished = true;
+    if (job.timing) job.public.timing = job.timing.finish();
     clearTimeout(job.timer);
     clearTimeout(job.phaseTimer);
     if (state !== 'succeeded') await cleanup(job);
     job.public.state = state;
+    if (state === 'succeeded' && job.timing) {
+      // A cache can be removed/replaced after the initial probe. Such a run must
+      // not teach the validated-cache cohort a network duration (or vice versa).
+      const report = job.verified.preview.report;
+      const observed = { ...job.timingCache };
+      for (const [branch, metadata] of [['dem', report.dem], ['image', report.imageSource]]) {
+        if (job.public[`${branch}Mode`] === 'auto') observed[branch] = metadata?.cacheHit === true ? 'validated-cache'
+          : metadata?.cacheHit === false ? 'network' : 'unknown';
+      }
+      if (observed.dem === job.timingCache.dem && observed.image === job.timingCache.image) {
+        void timingHistory.record({ features: job.timingFeatures, cache: observed, totalDurationMs: job.public.timing.totalDurationMs,
+          initialEstimateMs: job.public.timing.estimatedTotalMs, phaseDurationsMs: job.timing.phaseDurationsMs(),
+          finishedAt: job.public.timing.finishedAt }).catch(() => {});
+      }
+    }
     job.public.message = state === 'succeeded' ? '一体模型已生成，可以保存打印文件' : state === 'cancelled' ? '已取消，可重新生成' : error.message;
     if (error) job.public.error = error;
     if (active === job.public.id) active = undefined;
@@ -130,6 +156,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
   const stop = (job, reason) => {
     if (job.finished || job.stopReason) return;
     job.stopReason = reason;
+    job.preparationController?.abort();
     if (reason.state === 'cancelled') {
       job.public.state = 'cancelling'; job.public.message = '正在取消计算'; emit(job);
     }
@@ -141,6 +168,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
     if (!phases.includes(phase) || (job.phaseStarted && phases.indexOf(phase) <= phases.indexOf(job.public.phase))) return;
     clearTimeout(job.phaseTimer);
     job.phaseStarted = true; job.public.phase = phase;
+    job.timing?.enterPhase(phase);
     job.phaseTimer = setTimeout(() => {
       let code, message;
       if (phase === 'acquire') {
@@ -288,16 +316,32 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       catch (error) { const issue = publicError(error, '无法建立路线取景，请检查尺寸'); throw new DesktopError(issue.code, issue.message); }
       ensureOpen();
       if (active) throw new DesktopError('JOB_BUSY', '已有任务正在计算，请等待或取消后再生成');
+      const acceptedAtMs = monotonicNow(), createdAt = new Date(clock()).toISOString();
       const id = randomUUID();
-      const job = { public: { id, state: 'running', phase: 'prepare', progress: 0, message: '准备读取路线与高程', createdAt: new Date().toISOString(),
+      const job = { public: { id, state: 'running', phase: 'prepare', progress: 0, message: '准备读取路线与高程', createdAt,
         routeName: route.info.name, options: validated, demMode: mode, imageMode, imageLookbackMonths, offlineOnly, ...(image ? { imageId: image.info.id } : {}) },
         bounds, taskDir: join(root, id), exited: false, finished: false };
       job.done = new Promise(done => { job.doneResolve = done; });
-      jobs.set(id, job); active = id; emit(job);
+      jobs.set(id, job); active = id;
       enterPhase(job, 'prepare');
       try {
+        job.timingFeatures = timingFeatures({ route: route.info, options: validated, bounds, demMode: mode, imageMode, imageLookbackMonths,
+          demBytes: dem?.source.bytes, imageBytes: image?.source.bytes });
+        job.preparationController = new AbortController();
+        const probeSignal = job.preparationController.signal;
+        const unknownCache = { dem: mode === 'auto' ? 'unknown' : 'local', image: imageMode === 'auto' ? 'unknown' : image ? 'local' : 'none' };
+        let abortProbe;
+        const aborted = new Promise(done => { abortProbe = () => done(unknownCache); probeSignal.addEventListener('abort', abortProbe, { once: true }); });
+        const probeTimer = setTimeout(() => job.preparationController.abort(), 5000);
+        try {
+          job.timingCache = await Promise.race([probeTimingCache({ core, bounds, demMode: mode, imageMode, hasLocalImage: Boolean(image),
+            demCacheDir: cacheDir, imageCacheDir: surfaceCacheDir, imageLookbackMonths, signal: probeSignal, clock }), aborted]);
+        } finally { clearTimeout(probeTimer); probeSignal.removeEventListener('abort', abortProbe); }
+        const estimate = await timingHistory.estimate(job.timingFeatures, job.timingCache);
+        job.timing = createJobTiming({ estimate, startedAtMs: acceptedAtMs, monotonicNow, clock });
+        emit(job);
         await mkdir(job.taskDir, { recursive: true });
-        if (closed || job.stopReason) { job.exited = true; await finish(job, 'cancelled'); return copy(job.public); }
+        if (closed || job.stopReason) { job.exited = true; await finish(job, job.stopReason?.state ?? 'cancelled', job.stopReason?.error); return publicJob(job); }
         const child = await workerFactory({ workerPath, taskDir: job.taskDir });
         job.child = child;
         child.once('exit', () => { job.exited = true; void settleAfterExit(job); });
@@ -355,8 +399,8 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
           else { try { child.kill(); } catch { /* Wait for the real exit event. */ } }
         }
         else {
-          // Preview classification and color belong to the project settings.
-          const { routeColor, grassColor, rockColor, maxColors, grassSensitivity, grassContinuity, ...geometryOptions } = validated;
+          // Preview color belongs to the saved project, not the STL geometry.
+          const { routeColor, grassColor, rockColor, maxColors, baseColorSource, baseColor, textColorSource, textColor, grassEnabled, rockEnabled, grassSensitivity, grassContinuity, ...geometryOptions } = validated;
           child.postMessage({ type: 'generate', jobId: id, gpxXml: route.xml, fileName: route.info.fileName, demMode: mode,
             ...(mode === 'local' ? { demPath: dem.path, demSha256: dem.source.sha256, demSourcePath: dem.sourcePath } : { demCacheDir: cacheDir, offlineOnly }),
             imageMode, imageLookbackMonths, ...(imageMode === 'auto' ? { imageCacheDir: surfaceCacheDir, imageOfflineOnly } : {}),
@@ -371,14 +415,14 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
           else await finish(job, 'failed', publicError(error, '无法启动计算任务，请检查临时目录权限'));
         }
       }
-      return copy(job.public);
+      return publicJob(job);
     },
     cancel(id) {
       const job = find(id);
       if (!job.finished) stop(job, { state: 'cancelled' });
-      return copy(job.public);
+      return publicJob(job);
     },
-    get(id) { return copy(find(id).public); },
+    get(id) { return publicJob(find(id)); },
     async preview(id) {
       ensureOpen();
       const job = find(id);
@@ -402,8 +446,6 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       if (job.public.state !== 'succeeded' || !job.verified) throw new DesktopError('RESULT_UNAVAILABLE', '该任务尚无可保存的模型');
       const validated = appearanceOptions(validateOptions(options));
       const core = await corePromise, { mesh, appearance } = job.verified.preview;
-      if (format !== 'stl' && mesh.materialParts?.some(part => part.id === 'snow') && validated.maxColors !== 4)
-        throw new DesktopError('CONFIG_INVALID', '积雪模型须使用四色材料导出');
       let current;
       if (appearance) {
         core.validateModelAppearance(appearance, mesh.indices.length / 3);
@@ -427,6 +469,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       for (const job of jobs.values()) if (!job.finished) stop(job, { state: 'cancelled' });
       await Promise.all([...jobs.values()].map(job => job.done));
       await pruning;
+      await timingHistory.flush();
       await Promise.all([...jobs.values()].map(async job => { await cleanup(job); job.verified = undefined; }));
     },
   };

@@ -58,7 +58,7 @@ test('real snow worker saves classified closed volumes, a white material assembl
   assert.equal(preview.report.config.snowEnabled, true);
   assert.ok(Math.abs(preview.report.snow.actualCoveragePercent - 30) <= preview.report.snow.coverageTolerancePercent);
   assert.equal(preview.report.validation.connectedComponents, 1);
-  assert.deepEqual(preview.mesh.materialParts.map(part => part.id).sort(), ['route', 'snow', 'terrain']);
+  assert.deepEqual(preview.mesh.materialParts.map(part => part.id).sort(), ['base', 'route', 'snow', 'terrain']);
   for (const part of preview.mesh.materialParts) {
     assert.equal(part.faceClasses?.length, part.indices.length / 3, 'worker must classify every closed material volume');
     if (part.id !== 'terrain') assert.ok(part.faceClasses.every(kind => kind === part.id));
@@ -67,13 +67,16 @@ test('real snow worker saves classified closed volumes, a white material assembl
   const files = unzip(first.bytes), xml = files.get('3D/3dmodel.model').toString('utf8');
   assert.match(xml, /<components>/);
   assert.match(xml, /displaycolor="#ffffffff"/i);
-  assert.equal((xml.match(/<mesh>/g) ?? []).length, 3);
+  assert.equal((xml.match(/<mesh>/g) ?? []).length, 4);
   const obj = await manager.exportModel(job.id, 'obj', { ...colors, routeColor: '#0055ff' });
   assert.notEqual(obj.appearanceHash, first.appearanceHash);
   const objFiles = unzip(obj.bytes);
   assert.match(objFiles.get('model.mtl').toString('utf8'), /Kd 0 0\.3333333333333333 1/);
-  assert.deepEqual((objFiles.get('model.obj').toString('utf8').match(/^o .+$/gm) ?? []).sort(), ['o route', 'o snow', 'o terrain']);
-  await assert.rejects(manager.exportModel(job.id, '3mf', { ...colors, maxColors: 3 }), { code: 'CONFIG_INVALID' });
+  assert.deepEqual((objFiles.get('model.obj').toString('utf8').match(/^o .+$/gm) ?? []).sort(), ['o base', 'o route', 'o snow', 'o terrain']);
+  const monochrome=await manager.exportModel(job.id,'3mf',{...colors,maxColors:1,grassEnabled:false,rockEnabled:true,rockColor:'#ffffff',routeColor:'#ffffff',baseColorSource:'rock'});
+  const monoXml=unzip(monochrome.bytes).get('3D/3dmodel.model').toString('utf8');
+  assert.equal((monoXml.match(/<m:color /g)??[]).length,1);assert.match(monoXml,/displaycolor="#ffffffff"/i);
+  assert.equal((monoXml.match(/<mesh>/g)??[]).length,4);
   const stl = await manager.exportModel(job.id, 'stl', colors);
   assert.equal(createHash('sha256').update(stl.bytes).digest('hex'), manager.get(job.id).result.stlSha256);
   assert.deepEqual((await manager.preview(job.id)).appearance, preview.appearance);

@@ -9,10 +9,12 @@ export interface SurfaceImageSource {
 }
 export interface SentinelImageOptions {
   cacheDir:string; signal?:AbortSignal; offlineOnly?:boolean;
-  /** Maximum acquisition age; omitted requests retain the 24-month horizon. */
+  /** 12 selects the latest June-August season, 24 the latest two; default is 24. */
   lookbackMonths?:12|24;
   onProgress?:(event:{progress:number;message:string;stage?:'query'|'download'|'cloud'|'complete';
-    downloadedBytes?:number;cacheBytes?:number;requestCount?:number;coverage?:number})=>void;
+    downloadedBytes?:number;cacheBytes?:number;requestCount?:number;catalogRequestCount?:number;rangeRequestCount?:number;
+    retryCount?:number;downloadBudgetBytes?:number;reservedBytes?:number;coverage?:number;
+    sceneId?:string;sceneDate?:string;sceneContribution?:number;attemptedScenes?:number})=>void;
   /** Transport and clock injection keep HTTP/COG integration tests deterministic. */
   fetch?:typeof globalThis.fetch; now?:()=>Date; timeoutMs?:number;
 }

@@ -44,7 +44,7 @@ function check(source: TerrainMeshPayload, result: ReturnType<typeof buildIntegr
   for (let face = 0; face < source.indices.length / 3; face++) sourceArea += Math.max(0, projectedArea(source, face));
   for (let face = 0; face < result.mesh.indices.length / 3; face++) {
     const kind = result.mesh.faceKinds?.[face], area = projectedArea(result.mesh, face);
-    if (kind === 'route' || kind === 'terrain') { assert.ok(area > 0); surfaceArea += area; }
+    if (kind === 'route' || kind === 'terrain'||kind==='base'&&area>0) { assert.ok(area > 0); surfaceArea += area; }
     if (kind === 'route') routeArea += area;
     if (kind === 'frame') frameArea += area;
   }

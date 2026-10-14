@@ -7,7 +7,7 @@ import type { TerrainCropRegion, TerrainMeshPayload } from '../src/vendor/trailp
 
 const crop: TerrainCropRegion = { shape: 'rectangle', widthMm: 20, heightMm: 20, centerLat: 30, centerLon: 104, bearingDeg: 0, minLat: 29.99, maxLat: 30.01, minLon: 103.99, maxLon: 104.01 };
 const route = [[{ x: -10, y: 0 }, { x: 10, y: 0 }]];
-type Part = PrintableMesh & { id: 'terrain'|'snow'|'route'; faceKinds?: string[] };
+type Part = PrintableMesh & { id: 'terrain'|'snow'|'route'|'base'|'text'; faceKinds?: string[] };
 type SnowMesh = TerrainMeshPayload & { materialParts?: Part[] };
 type SnowReport = { actualCoveragePercent: number; volumeMm3: number; maxThicknessMm: number; coverageTolerancePercent: number };
 const validatePart = assertPrintableMesh as (mesh: PrintableMesh, options?: { allowDisconnected: boolean }) => ReturnType<typeof assertPrintableMesh>;
@@ -101,10 +101,10 @@ test('flat terrain has deterministic finite partial coverage and full coverage h
   for(const coverage of [30,100]) {const result=generate(terrain(),coverage);checkVolumes(result.mesh);assert.ok(result.report.snow);close(result.report.snow.actualCoveragePercent,coverage,0.02);assert.ok(result.mesh.positions.every(Number.isFinite));if(coverage===100)assert.ok(!result.mesh.faceKinds?.includes('terrain'));}
 });
 
-test('snow material stays inside the terrain footprint while the terrain volume includes its frame',()=>{
+test('snow and terrain stay inside their footprint while the separate base includes its frame',()=>{
   const source=terrain(x=>0.2*(x+10));const {mesh}=generate(source,100,1,{frameWidthMm:3});checkVolumes(mesh);
   const bounds=validatePart(part(mesh,'snow'),{allowDisconnected:true}).bounds;close(bounds.size.x,20);close(bounds.size.y,20);
-  assert.ok(validatePart(part(mesh,'terrain'),{allowDisconnected:true}).bounds.size.x>25.9);
+  close(validatePart(part(mesh,'terrain'),{allowDisconnected:true}).bounds.size.x,20);assert.ok(validatePart(part(mesh,'base'),{allowDisconnected:true}).bounds.size.x>25.9);
   close(topAt(mesh,11,3),2);
 });
 

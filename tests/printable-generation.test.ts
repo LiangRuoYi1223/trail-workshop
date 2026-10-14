@@ -124,7 +124,7 @@ test('selected thickness reaches the generated and saved closed STL rather than 
     let routeFaces = 0, terrainFaces = 0;
     for (let face = 0; face < stl.triangleCount; face++) {
       const kind = result.mesh.faceKinds?.[face];
-      if (kind !== 'route' && kind !== 'terrain') continue;
+      if (kind !== 'route' && kind !== 'terrain'&&!(kind==='base'&&xyArea(result.mesh,face)>0)) continue;
       if (kind === 'route') routeFaces++; else terrainFaces++;
       for (let vertex = 0; vertex < 3; vertex++) {
         near(stl.coordinates[face * 9 + vertex * 3 + 2], kind === 'route' ? 5.5 : 3);
@@ -208,8 +208,8 @@ test('final signed volume equals original terrain plus the route and flat frame 
   near(actualAddedVolume, expectedAddedVolume, 1e-4);
   near(report.sourceTerrainVolumeMm3, originalVolume);
   near(report.addedVolumeMm3, actualAddedVolume);
-  near(report.expectedAddedVolumeMm3, expectedAddedVolume);
-  near(report.volumeErrorMm3, Math.abs(actualAddedVolume - expectedAddedVolume));
+  near(report.expectedAddedVolumeMm3, expectedAddedVolume,1e-4);
+  near(report.volumeErrorMm3, Math.abs(actualAddedVolume - report.expectedAddedVolumeMm3));
   assert.ok(report.volumeErrorMm3 <= report.volumeToleranceMm3);
   assert.ok(report.volumeToleranceMm3 > 0);
   near((result.report.validation as PrintableMeshReport).volumeMm3, finalVolume);

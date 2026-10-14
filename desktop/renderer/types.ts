@@ -6,8 +6,10 @@ export interface ModelOptions {
   cornerRadiusMm: number; bearingDeg: number; paddingFraction: number; baseThicknessMm: number;
   zExaggeration: number; gridColumns: number; smoothing: 'raw' | 'light' | 'medium' | 'heavy';
   routeWidthMm: number; routeHeightMm: number; routeColor: string; frameWidthMm: number;
-  maxColors:2|3|4; grassColor:string; rockColor:string;
   grassSensitivity?: number; grassContinuity?: number;
+  maxColors:1|2|3|4|5|6; grassColor:string; rockColor:string;
+  grassEnabled:boolean; rockEnabled:boolean; routeEnabled:boolean; textEnabled:boolean;
+  baseText?:string; baseTextSizeMm?:number; baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string; textColorSource?:'route'|'custom'; textColor?:string;
   snowEnabled?: boolean; snowCoveragePercent?: number; snowMaxThicknessMm?: number;
   center?: GeoPoint; groundWidthM?: number;
 }
@@ -24,8 +26,9 @@ export interface SurfaceImageSource {
   cacheHit: boolean; retrievedAt: string; attribution?: string;
   bounds: { west: number; south: number; east: number; north: number };
 }
-export interface AppearanceOptions { maxColors:2|3|4; grassColor:string; rockColor:string; routeColor:string }
-export type FaceClass = 'grass'|'rock'|'snow'|'route';
+export interface AppearanceOptions { maxColors:1|2|3|4|5|6; grassColor:string; rockColor:string; grassEnabled?:boolean; rockEnabled?:boolean;
+  baseText?:string; baseTextSizeMm?:number; baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string; textColorSource?:'route'|'custom'; textColor?:string; routeColor:string }
+export type FaceClass = 'grass'|'rock'|'snow'|'route'|'base'|'text';
 export interface ModelAppearance {
   schemaVersion:1; faceClasses:FaceClass[]; faceMaterials:number[];
   palette:Array<{id:FaceClass;name:string;color:string}>; options:AppearanceOptions;
@@ -42,6 +45,7 @@ export interface PhaseProgress {
   state: 'running' | 'complete'; progress: number; message: string;
   stage?: 'query' | 'download' | 'cloud' | 'complete';
   downloadedBytes?: number; cacheBytes?: number; requestCount?: number; coverage?: number;
+  catalogRequestCount?:number;rangeRequestCount?:number;retryCount?:number;downloadBudgetBytes?:number;reservedBytes?:number;sceneId?:string;sceneDate?:string;sceneContribution?:number;attemptedScenes?:number;
 }
 export interface Job {
   id: string; state: 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled';
@@ -49,11 +53,12 @@ export interface Job {
   imageMode?: ImageMode; imageLookbackMonths?: 12 | 24;
   phase?: 'prepare' | 'acquire' | 'model' | 'verify';
   acquisition?: { image?: PhaseProgress; dem?: PhaseProgress };
+  timing?: {estimatedTotalMs:number;estimatedRangeMs:{low:number;high:number};confidence:'uncalibrated'|'reference'|'calibrated';estimateVersion:string;totalDurationMs?:number;finishedAt?:string;elapsedMs?:number};
   result?: { dimensions: { x: number; y: number; z: number }; triangleCount: number; downloadName: string; stlSha256: string; demSource?: { provider: string; dataset?: string; cacheHit?: boolean; tileCount?: number }; imageSource?: SurfaceImageSource };
   error?: { code: string; message: string };
 }
 export interface MaterialPart {
-  id: 'terrain'|'snow'|'route'; positions: number[]; indices: number[];
+  id: 'terrain'|'snow'|'route'|'base'|'text'; positions: number[]; indices: number[];
   faceKinds?: string[]; faceClasses?: FaceClass[];
 }
 export interface SnowReport {

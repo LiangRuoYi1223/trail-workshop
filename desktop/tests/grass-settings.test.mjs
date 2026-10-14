@@ -39,7 +39,7 @@ async function fixture(t) {
 test('missing grass sensitivity keeps the existing classification default', () => {
   const options = validateOptions({ maxColors: 2, widthMm: 150 });
   assert.equal(options.grassSensitivity, 50);
-  assert.equal(options.maxColors, 2); assert.equal(options.widthMm, 150);
+  assert.equal(options.maxColors, 6); assert.equal(options.grassEnabled, true); assert.equal(options.rockEnabled, false); assert.equal(options.widthMm, 150);
 });
 
 test('grass sensitivity accepts finite percentage values including both endpoints', () => {
@@ -73,7 +73,7 @@ test('old projects missing grass sensitivity gain the default while preserving t
   const before = await readFile(f.sessionPath), next = f.fresh();
   const startup = await next.store.getSession(), restored = await next.store.restoreSession();
   for (const options of [startup.preferences.options, restored.options]) {
-    assert.equal(options.grassSensitivity, 50); assert.equal(options.maxColors, 2); assert.equal(options.widthMm, 150);
+    assert.equal(options.grassSensitivity, 50); assert.equal(options.maxColors, 6); assert.equal(options.grassEnabled, true); assert.equal(options.rockEnabled, false); assert.equal(options.widthMm, 150);
   }
   assert.ok(restored.route); assert.deepEqual(restored.warnings, []);
   assert.deepEqual(await readFile(f.sessionPath), before); assert.equal(f.workerCount(), 0);
@@ -92,7 +92,7 @@ test('missing grass continuity restores the desktop default without changing sen
   const options = validateOptions({ grassSensitivity: 72.5, maxColors: 2, widthMm: 150 });
   assert.equal(options.grassContinuity, 50);
   assert.equal(options.grassSensitivity, 72.5);
-  assert.equal(options.maxColors, 2); assert.equal(options.widthMm, 150);
+  assert.equal(options.maxColors, 6); assert.equal(options.grassEnabled, true); assert.equal(options.rockEnabled, false); assert.equal(options.widthMm, 150);
 });
 
 test('grass continuity accepts finite percentages including disabled and strongest endpoints', () => {
@@ -133,7 +133,7 @@ test('legacy projects missing grass continuity keep sensitivity and gain the des
   const startup = await next.store.getSession(), restored = await next.store.restoreSession();
   for (const options of [startup.preferences.options, restored.options]) {
     assert.equal(options.grassContinuity, 50); assert.equal(options.grassSensitivity, 72.5);
-    assert.equal(options.maxColors, 2); assert.equal(options.widthMm, 150);
+    assert.equal(options.maxColors, 6); assert.equal(options.grassEnabled, true); assert.equal(options.rockEnabled, false); assert.equal(options.widthMm, 150);
   }
   assert.ok(restored.route); assert.deepEqual(restored.warnings, []);
   assert.deepEqual(await readFile(f.sessionPath), before); assert.equal(f.workerCount(), 0);

@@ -1,6 +1,8 @@
+import { validateOptions } from './files.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import { saveModelStl } from './save-stl.mjs';
 import { saveModelFile } from './save-model.mjs';
@@ -22,14 +24,126 @@ function archiveEntries(bytes) {
   return entries;
 }
 
-async function checkColorExports(manager, id, outputRoot, image, automaticImage = false) {
+const requireCheck = (condition, message) => { if (!condition) throw new Error(message); };
+const attributes = text => Object.fromEntries([...text.matchAll(/([\w:]+)="([^"]*)"/g)].map(match => [match[1], match[2]]));
+const equalNumbers = (actual, expected) => actual.length === expected.length && actual.every((value, index) => Number.isFinite(value) && value === expected[index]);
+
+function checkExportManifest(manifest, prepared, outer, palette) {
+  requireCheck(JSON.stringify(manifest.boundsMm) === JSON.stringify(outer.bounds), '彩色文件外形尺寸与预览不一致。');
+  if (!prepared) {
+    requireCheck(manifest.materialParts === undefined, '单一外形文件出现未确认的材料实体。'); return;
+  }
+  const report = prepared.report;
+  requireCheck(Array.isArray(manifest.materialParts) && manifest.materialParts.length === report.parts.length, '彩色文件材料实体数量不一致。');
+  for (let index = 0; index < report.parts.length; index++) {
+    const expected = report.parts[index], part = manifest.materialParts[index];
+    requireCheck(part.id === expected.id && part.vertexCount === expected.vertexCount && part.triangleCount === expected.triangleCount
+      && part.connectedComponents === expected.connectedComponents && part.boundaryEdges === 0 && part.nonManifoldEdges === 0
+      && Number.isFinite(part.volumeMm3) && part.volumeMm3 > 0 && Math.abs(part.volumeMm3 - expected.volumeMm3) <= report.volumeToleranceMm3
+      && JSON.stringify(part.bounds) === JSON.stringify(expected.bounds)
+      && part.defaultMaterial === prepared.parts[index].defaultMaterial && part.defaultMaterial < palette.length,
+    '彩色文件材料角色、闭合性、体积或材质记录不一致。');
+  }
+  requireCheck(Number.isFinite(manifest.materialVolumeMm3) && Math.abs(manifest.materialVolumeMm3 - report.volumeMm3) <= report.volumeToleranceMm3
+    && manifest.materialVolumeToleranceMm3 === report.volumeToleranceMm3, '彩色文件材料体积总和与单一外形不一致。');
+}
+
+function check3mf(files, expectedParts, palette, prepared, preview, core) {
+  const model = files.get('3D/3dmodel.model')?.toString('utf8') ?? '';
+  const colors = [...model.matchAll(/<m:color color="(#[a-f0-9]{6})ff"\/>/g)].map(match => match[1]);
+  requireCheck(model.includes('unit="millimeter"') && JSON.stringify(colors) === JSON.stringify(palette.map(entry => entry.color)), '3MF 毫米单位或调色板不一致。');
+  const objects = [...model.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)].map(match => ({ attributes: attributes(match[1]), body: match[2] }));
+  requireCheck(objects.length === (model.match(/<object\b/g) ?? []).length
+    && objects.length === expectedParts.length + (prepared ? 1 : 0)
+    && new Set(objects.map(object => object.attributes.id)).size === objects.length, '3MF 材料对象数量或身份不一致。');
+  if (prepared) {
+    const bases = [...model.matchAll(/<base name="([^"]*)" displaycolor="(#[a-f0-9]{6})ff"\/>/g)].map(match => match[2]);
+    requireCheck(model.includes('<basematerials id="2">') && JSON.stringify(bases) === JSON.stringify(palette.map(entry => entry.color)), '3MF 基础材料颜色不一致。');
+    const assembly = objects.at(-1), expectedIds = expectedParts.map((_, index) => String(index + 3));
+    const components = [...assembly.body.matchAll(/<component\b([^>]*)\/>/g)].map(match => attributes(match[1]));
+    const items = [...model.matchAll(/<item\b([^>]*)\/>/g)].map(match => attributes(match[1]));
+    requireCheck(assembly.attributes.id === String(expectedParts.length + 3) && assembly.attributes.name === 'terrain-assembly'
+      && assembly.body.includes('<components>') && !assembly.body.includes('<mesh>')
+      && components.length === (model.match(/<component\b/g) ?? []).length && components.length === expectedIds.length
+      && components.every((component, index) => component.objectid === expectedIds[index] && Object.keys(component).length === 1)
+      && items.length === 1 && items[0].objectid === assembly.attributes.id && Object.keys(items[0]).length === 1,
+    '3MF 装配引用、相对位置或构建对象不一致。');
+  } else {
+    const items = [...model.matchAll(/<item\b([^>]*)\/>/g)].map(match => attributes(match[1]));
+    requireCheck(items.length === 1 && items[0].objectid === '2' && Object.keys(items[0]).length === 1
+      && !model.includes('<component'), '3MF 单一模型构建引用不一致。');
+  }
+  const decoded = [];
+  for (let index = 0; index < expectedParts.length; index++) {
+    const expected = expectedParts[index], object = objects[index], part = expected.mesh;
+    requireCheck(object.attributes.id === String(prepared ? index + 3 : 2) && object.attributes.type === 'model'
+      && (!prepared || object.attributes.name === part.id && object.attributes.pid === '2' && Number(object.attributes.pindex) === expected.defaultMaterial),
+    '3MF 材料对象角色或默认材质不一致。');
+    const vertices = [...object.body.matchAll(/<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"\/>/g)];
+    const faces = [...object.body.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)" pid="([12])" p1="(\d+)" p2="(\d+)" p3="(\d+)"\/>/g)];
+    const positions = vertices.flatMap(vertex => [Number(vertex[1]), Number(vertex[2]), Number(vertex[3])]);
+    const indices = faces.flatMap(face => [Number(face[1]), Number(face[2]), Number(face[3])]);
+    requireCheck(vertices.length === (object.body.match(/<vertex\b/g) ?? []).length && equalNumbers(positions, part.positions), '3MF 材料实体顶点与预览不一致。');
+    requireCheck(faces.length === (object.body.match(/<triangle\b/g) ?? []).length && equalNumbers(indices, part.indices), '3MF 材料实体局部索引与预览不一致。');
+    requireCheck(faces.length === expected.materials.length && faces.every((face, faceIndex) => Number(face[4]) === (prepared && part.id !== 'terrain' ? 2 : 1)
+      && Number(face[5]) === expected.materials[faceIndex] && face[5] === face[6] && face[5] === face[7]
+      && Number(face[5]) < palette.length), '3MF 材料实体面材质或材料角色不一致。');
+    core.assertPrintableMesh({ positions, indices }, { allowDisconnected: Boolean(prepared) });
+    decoded.push({ ...part, positions, indices });
+  }
+  requireCheck((model.match(/<mesh>/g) ?? []).length === expectedParts.length, '3MF 出现未确认的网格实体。');
+  if (prepared) core.validateMaterialParts({ ...preview.mesh, materialParts: decoded });
+}
+
+function checkObj(files, expectedParts, palette, prepared, preview, core) {
+  const obj = files.get('model.obj')?.toString('utf8') ?? '', mtl = files.get('model.mtl')?.toString('utf8') ?? '';
+  requireCheck(files.has('palette.png') && obj.includes('mtllib model.mtl'), 'OBJ 材质文件或色卡缺失。');
+  const objects = [];
+  let current;
+  for (const line of obj.split(/\r?\n/)) {
+    if (line.startsWith('o ')) { current = { id: line.slice(2), positions: [], indices: [], materials: [], groups: [], currentMaterial: undefined }; objects.push(current); }
+    else if (/^(v |f |g |usemtl )/.test(line)) {
+      requireCheck(current, 'OBJ 材料实体对象之前出现几何。');
+      if (line.startsWith('v ')) { const xyz = line.split(/\s+/).slice(1).map(Number); requireCheck(xyz.length === 3 && xyz.every(Number.isFinite), 'OBJ 顶点无效。'); current.positions.push(...xyz); }
+      else if (line.startsWith('g ')) current.groups.push(line.slice(2));
+      else if (line.startsWith('usemtl ')) { const match = /^usemtl palette_(\d+)$/.exec(line); requireCheck(match && Number(match[1]) < palette.length, 'OBJ 材质索引无效。'); current.currentMaterial = Number(match[1]); }
+      else { const match = /^f (\d+) (\d+) (\d+)$/.exec(line); requireCheck(match && current.currentMaterial !== undefined, 'OBJ 三角面或材质无效。'); current.indices.push(Number(match[1]), Number(match[2]), Number(match[3])); current.materials.push(current.currentMaterial); }
+    }
+  }
+  requireCheck(objects.length === expectedParts.length, 'OBJ 材料实体数量不一致。');
+  let vertexOffset = 1;
+  const decoded = [];
+  for (let index = 0; index < expectedParts.length; index++) {
+    const expected = expectedParts[index], actual = objects[index], part = expected.mesh;
+    requireCheck(actual.id === (prepared ? part.id : 'terrain') && (!prepared || actual.groups.length === 1 && actual.groups[0] === part.id), 'OBJ 材料对象角色不一致。');
+    requireCheck(equalNumbers(actual.positions, part.positions), 'OBJ 材料实体顶点与预览不一致。');
+    requireCheck(equalNumbers(actual.indices, part.indices.map(value => value + vertexOffset)), 'OBJ 材料实体全局索引与预览不一致。');
+    requireCheck(equalNumbers(actual.materials, expected.materials), 'OBJ 材料实体面材质与角色不一致。');
+    const indices = actual.indices.map(value => value - vertexOffset);
+    core.assertPrintableMesh({ positions: actual.positions, indices }, { allowDisconnected: Boolean(prepared) });
+    decoded.push({ ...part, positions: actual.positions, indices }); vertexOffset += part.positions.length / 3;
+  }
+  const definitions = [...mtl.matchAll(/^newmtl (\S+)\r?\nKd ([^\r\n]+)\r?\nd 1\r?\nillum 1$/gm)];
+  requireCheck(definitions.length === palette.length && definitions.length === (mtl.match(/^newmtl /gm) ?? []).length
+    && definitions.every((definition, index) => definition[1] === `palette_${index}`
+      && equalNumbers(definition[2].split(/\s+/).map(Number), [...Buffer.from(palette[index].color.slice(1), 'hex')].map(value => value / 255))),
+  'OBJ 固定 RGB 材质定义与调色板不一致。');
+  if (prepared) core.validateMaterialParts({ ...preview.mesh, materialParts: decoded });
+}
+
+async function checkColorExports(manager, id, outputRoot, image, automaticImage, core) {
   const preview = await manager.preview(id), artifact = await manager.artifact(id), appearance = preview.appearance;
-  if (!appearance || appearance.options.maxColors !== 3 || appearance.palette.length > 3
+  if (!appearance || ![1,2,3,4,5,6].includes(appearance.options.maxColors) || appearance.palette.length > appearance.options.maxColors
     || appearance.faceClasses.length !== preview.mesh.indices.length / 3
     || appearance.classification !== (image || automaticImage ? 'rgb-greenness' : 'uniform')) throw new Error('生成模型没有有效的有限颜色外观。');
-  const formats = [];
-  for (const [format, options] of [['3mf', appearance.options], ['obj', { maxColors: 2,
+  const outer = core.assertPrintableMesh(preview.mesh), formats = [];
+  for (const [format, requested] of [['3mf', appearance.options], ['obj', { maxColors: 2,
     grassColor: '#3b7a49', rockColor: '#6f7065', routeColor: '#eb6e2e' }]]) {
+    const options = core.validateAppearanceOptions(validateOptions(requested));
+    const current = core.recolorModelAppearance(appearance, options);
+    const prepared = preview.mesh.materialParts === undefined ? undefined : core.prepareMaterialParts(preview.mesh, current);
+    const expectedPalette = prepared?.palette ?? current.palette;
+    const expectedParts = prepared?.parts ?? [{ mesh: preview.mesh, materials: current.faceMaterials }];
     const exported = await manager.exportModel(id, format, options);
     const target = join(outputRoot, format === '3mf' ? '验证模型_三色.3mf' : '验证模型_改色两色_OBJ.zip');
     const saved = await saveModelFile(exported.bytes, target, { expectedSha256: sha256(exported.bytes) });
@@ -41,41 +155,30 @@ async function checkColorExports(manager, id, outputRoot, image, automaticImage 
       throw new Error('彩色打印文件缺少真实影像来源及拍摄日期。');
     }
     if (sha256(bytes) !== saved.sha256 || !manifest || manifest.unit !== 'mm'
-      || manifest.triangleCount !== preview.mesh.indices.length / 3 || manifest.vertexCount !== preview.mesh.positions.length / 3
-      || manifest.appearance.hash !== exported.appearanceHash || !Array.isArray(palette) || !palette.length
+      || manifest.triangleCount !== outer.triangleCount || manifest.vertexCount !== outer.vertexCount
+      || manifest.appearance.hash !== exported.appearanceHash || manifest.appearance.hash !== current.hash
+      || JSON.stringify(palette) !== JSON.stringify(expectedPalette) || !Array.isArray(palette) || !palette.length
       || palette.length > options.maxColors || new Set(palette.map(entry => entry.color)).size !== palette.length
       || palette.some(entry => !/^#[a-f0-9]{6}$/.test(entry.color)) || !palette.some(entry => entry.color === options.routeColor)) {
       throw new Error('彩色文件与当前配色、颜色上限或毫米模型不一致。');
     }
-    if (format === '3mf') {
-      const model = files.get('3D/3dmodel.model')?.toString('utf8') ?? '';
-      const vertices = [...model.matchAll(/<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"\/>/g)];
-      const faces = [...model.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)" pid="1" p1="(\d+)" p2="(\d+)" p3="(\d+)"\/>/g)];
-      const colors = [...model.matchAll(/<m:color color="(#[a-f0-9]{6})ff"\/>/g)].map(match => match[1]);
-      if (!model.includes('unit="millimeter"') || vertices.length !== manifest.vertexCount || faces.length !== manifest.triangleCount
-        || JSON.stringify(colors) !== JSON.stringify(palette.map(entry => entry.color))
-        || vertices.some((vertex, index) => [1, 2, 3].some(axis => !Number.isFinite(Number(vertex[axis])) || Number(vertex[axis]) !== preview.mesh.positions[index * 3 + axis - 1]))
-        || faces.some((face, index) => [1, 2, 3].some(axis => Number(face[axis]) !== preview.mesh.indices[index * 3 + axis - 1])
-          || face[4] !== face[5] || face[4] !== face[6] || Number(face[4]) >= palette.length)) throw new Error('3MF 网格、材质或有限坐标验证失败。');
-    } else {
-      const obj = files.get('model.obj')?.toString('utf8') ?? '', mtl = files.get('model.mtl')?.toString('utf8') ?? '';
-      const vertices = obj.split('\n').filter(line => line.startsWith('v ')), faces = obj.split('\n').filter(line => line.startsWith('f '));
-      if (exported.appearanceHash === appearance.hash || palette.length !== 2 || !palette.some(entry => entry.color === '#3b7a49')
-        || vertices.length !== manifest.vertexCount || faces.length !== manifest.triangleCount
-        || vertices.some((line, index) => line.split(' ').slice(1).some((value, axis) => !Number.isFinite(Number(value)) || Number(value) !== preview.mesh.positions[index * 3 + axis]))
-        || !files.has('palette.png') || mtl.split('\n').filter(line => line.startsWith('newmtl ')).length !== palette.length) throw new Error('改色两色 OBJ 材质或几何验证失败。');
+    checkExportManifest(manifest, prepared, outer, palette);
+    if (format === '3mf') check3mf(files, expectedParts, palette, prepared, preview, core);
+    else {
+      requireCheck(exported.appearanceHash !== appearance.hash && palette.length === 2 && palette.some(entry => entry.color === '#3b7a49'), '改色两色 OBJ 配色验证失败。');
+      checkObj(files, expectedParts, palette, prepared, preview, core);
     }
     formats.push({ format, path: saved.path, bytes: saved.bytes, sha256: saved.sha256,
-      appearanceHash: exported.appearanceHash, maxColors: options.maxColors, colorCount: palette.length, palette });
+      appearanceHash: exported.appearanceHash, maxColors: options.maxColors, colorCount: palette.length, palette,
+      ...(prepared ? { materialParts: prepared.report.parts, materialVolumeMm3: prepared.report.volumeMm3, assemblyVerified: true } : {}) });
   }
   const after = await manager.preview(id), stl = await manager.exportModel(id, 'stl', appearance.options);
   if (after.appearance.hash !== appearance.hash || sha256(stl.bytes) !== artifact.stlSha256) throw new Error('改色导出改变了已生成的分类或 STL。');
   return { passed: true, classification: appearance.classification, imageSha256: image?.sha256 ?? appearance.source?.sha256,
     frozenGeometry: true, recolorChangesHash: true, formats };
 }
-
 // Invoked explicitly by the packaging smoke check, outside the renderer bridge.
-export async function checkRuntime({ app, manager, routePath, demPath, imagePath, destination, onlineRoutePath, imageMode = 'local' }) {
+export async function checkRuntime({ app, manager, routePath, demPath, imagePath, destination, onlineRoutePath, imageMode = 'local', coreModuleUrl }) {
   const outputRoot = resolve(destination);
   await mkdir(outputRoot, { recursive: true });
   const runtime = { packaged: app.isPackaged, electron: process.versions.electron, node: process.versions.node,
@@ -84,6 +187,7 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
     if (!runtime.packaged) throw new Error('Runtime verification must use the packaged executable.');
     if (!['auto', 'local', 'none'].includes(imageMode)) throw new Error('Runtime imagery mode must be auto, local or none.');
     if (!routePath || !demPath) throw new Error('请通过 --runtime-check-local-route 和 --runtime-check-dem 指定验证用 GPX 或 KML 与 GeoTIFF；软件不再附带示例。');
+    const core = await import(coreModuleUrl ?? pathToFileURL(join(app.getAppPath(), 'core/index.js')).href);
     const route = await manager.addRoute(resolve(routePath));
     const dem = await manager.addDem(resolve(demPath));
     const image = imageMode === 'local' && imagePath ? await manager.addImage(resolve(imagePath)) : undefined;
@@ -107,7 +211,7 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
     let completed = await waitFor(task.id);
     if (completed.state !== 'succeeded') throw new Error(completed.error?.message ?? 'Packaged generation failed.');
     const local = { state: completed.state, result: completed.result };
-    const color = await checkColorExports(manager, task.id, outputRoot, image, imageMode === 'auto');
+    const color = await checkColorExports(manager, task.id, outputRoot, image, imageMode === 'auto', core);
     let automaticSurface;
     if (imageMode === 'auto') {
       const source = completed.result.imageSource, firstPreview = await manager.preview(task.id);
@@ -171,4 +275,23 @@ export async function checkRuntime({ app, manager, routePath, demPath, imagePath
     await writeFile(join(outputRoot, 'runtime-check.json'), JSON.stringify({ passed: false, runtime, error: error.message }, null, 2) + '\n');
     throw error;
   }
+}
+
+
+/** Reuse the same strict manifest, geometry, material and volume readback in role-toggle acceptance. */
+export function validateColorArtifact(bytes,format,preview,appearance,core) {
+  if(format!=='3mf'&&format!=='obj')throw new Error('彩色回读格式无效。');
+  const files=archiveEntries(bytes),outer=core.assertPrintableMesh(preview.mesh);
+  const prepared=preview.mesh.materialParts===undefined?undefined:core.prepareMaterialParts(preview.mesh,appearance);
+  const palette=prepared?.palette??appearance.palette;
+  const parts=prepared?.parts??[{mesh:preview.mesh,materials:appearance.faceMaterials}];
+  const manifest=JSON.parse(files.get(format==='3mf'?'Metadata/manifest.json':'manifest.json')?.toString('utf8')??'null');
+  requireCheck(manifest?.unit==='mm'&&manifest.triangleCount===outer.triangleCount&&manifest.vertexCount===outer.vertexCount
+    &&manifest.appearance?.hash===appearance.hash&&JSON.stringify(manifest.appearance?.palette)===JSON.stringify(palette),
+    '彩色回读记录与实际外形/外观不一致。');
+  checkExportManifest(manifest,prepared,outer,palette);
+  if(format==='3mf')check3mf(files,parts,palette,prepared,preview,core);
+  else checkObj(files,parts,palette,prepared,preview,core);
+  return {actualGeometryReadback:true,unit:'mm',colors:palette.length,roles:parts.map(part=>part.mesh.id??'terrain'),
+    triangleCount:outer.triangleCount,volumeMm3:outer.volumeMm3};
 }

@@ -4,7 +4,7 @@ import type { MaterialPart, TerrainMeshPayload } from '../vendor/trailprint/type
 
 type Kind=NonNullable<TerrainMeshPayload['faceKinds']>[number];
 export interface MaterialSurfaceVertex {x:number;y:number;terrainZ:number;surfaceZ:number}
-export interface MaterialSurfaceTriangle {ids:[number,number,number];kind:'terrain'|'route'|'frame'}
+export interface MaterialSurfaceTriangle {ids:[number,number,number];kind:'terrain'|'route'|'frame'|'text'}
 
 /** Each material owns an interval of Z; interfaces share the identical planar tessellation. */
 export function buildMaterialParts(points:MaterialSurfaceVertex[],triangles:MaterialSurfaceTriangle[],routeHeight:number,base:number,signal?:AbortSignal):MaterialPart[] {
@@ -16,11 +16,11 @@ export function buildMaterialParts(points:MaterialSurfaceVertex[],triangles:Mate
     const vertex=(xy:number,z:number)=>{const key=`${xy},${Math.round(z*1e6)}`;let found=map.get(key);if(found!==undefined)return found;found=positions.length/3;positions.push(points[xy].x,points[xy].y,z);map.set(key,found);return found;};
     const face=(a:number,b:number,c:number,kind:Kind)=>{if(a===b||a===c||b===c)return;indices.push(a,b,c);faceKinds.push(kind);if(++budget>MAX_MESH_TRIANGLES*3)throw new TerrainError('MESH_TOO_COMPLEX','实体材料网格超过三角面预算，请降低采样');};
     const topKind=(t:MaterialSurfaceTriangle):Kind=>id==='terrain'?(t.kind==='frame'?'frame':'terrain'):id;
-    const wallKind:Kind=id==='terrain'?'wall':id==='snow'?'snow-wall':'route-wall';
+    const wallKind:Kind=id==='terrain'?'wall':id==='snow'?'snow-wall':id==='text'?'text-wall':id==='base'?'base':'route-wall';
     for(const [i,t] of faces.entries()) {
       if(i%256===0)signal?.throwIfAborted();const [a,b,c]=t.ids;
       face(vertex(a,upper(a,t)),vertex(b,upper(b,t)),vertex(c,upper(c,t)),topKind(t));
-      face(vertex(a,lower(a,t)),vertex(c,lower(c,t)),vertex(b,lower(b,t)),id==='terrain'?'bottom':id);
+      face(vertex(a,lower(a,t)),vertex(c,lower(c,t)),vertex(b,lower(b,t)),id==='terrain'?'wall':id);
       for(const v of t.ids){const set=levels.get(v)??new Set<number>();set.add(lower(v,t));set.add(upper(v,t));levels.set(v,set);}
       for(const [a,b] of [[t.ids[0],t.ids[1]],[t.ids[1],t.ids[2]],[t.ids[2],t.ids[0]]]){const key=a<b?`${a},${b}`:`${b},${a}`,values=adjacency.get(key)??[];values.push({a,b,t});adjacency.set(key,values);}
     }
@@ -42,8 +42,10 @@ export function buildMaterialParts(points:MaterialSurfaceVertex[],triangles:Mate
     }
     parts.push({id,positions,indices,faceKinds});
   }
-  solid('terrain',triangles,()=>0,(v,t)=>t.kind==='frame'?base:points[v].terrainZ);
-  solid('snow',triangles.filter(t=>t.kind!=='frame'&&t.ids.some(v=>points[v].surfaceZ-points[v].terrainZ>1e-8)),v=>points[v].terrainZ,v=>points[v].surfaceZ);
+  solid('base',triangles,()=>0,()=>base);
+  solid('terrain',triangles.filter(t=>t.kind!=='frame'&&t.kind!=='text'&&t.ids.some(v=>points[v].terrainZ-base>1e-8)),()=>base,v=>points[v].terrainZ);
+  solid('snow',triangles.filter(t=>t.kind!=='frame'&&t.kind!=='text'&&t.ids.some(v=>points[v].surfaceZ-points[v].terrainZ>1e-8)),v=>points[v].terrainZ,v=>points[v].surfaceZ);
   solid('route',triangles.filter(t=>t.kind==='route'),v=>points[v].surfaceZ,v=>points[v].surfaceZ+routeHeight);
+  solid('text',triangles.filter(t=>t.kind==='text'),()=>base,()=>base+0.6);
   return parts;
 }

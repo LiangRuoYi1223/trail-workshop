@@ -6,7 +6,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
-const releaseRoot=path.join(root,'desktop','release','v0.4.7');
+const releaseRoot=path.join(root,'desktop','release','v0.4.8');
 const releasePath=path.join(releaseRoot,'TerrainWorkshop-win32-x64');
 if(existsSync(releasePath))throw new Error('软件输出目录已经存在，请先保留或移走上一版完整文件夹，再重新打包。');
 const parent=path.join(root,'artifacts','desktop-packaging');
@@ -27,7 +27,7 @@ for(const [from,to] of [
     filter:source=>path.basename(source)!=='Copernicus-GLO30-SAMPLE.md'});
 }
 const sourcePackage=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));
-const application={name:'terrain-workshop',productName:'徒步地形工坊',version:'0.4.7',author:'TerrainWorkshop contributors',private:true,type:'module',main:'main/main.mjs',dependencies:sourcePackage.dependencies};
+const application={name:'terrain-workshop',productName:'徒步地形工坊',version:'0.4.8',author:'TerrainWorkshop contributors',private:true,type:'module',main:'main/main.mjs',dependencies:sourcePackage.dependencies};
 await writeFile(path.join(stage,'package.json'),JSON.stringify(application,null,2)+'\n');
 const lock=JSON.parse(await readFile(path.join(root,'package-lock.json'),'utf8'));
 lock.name=application.name;lock.version=application.version;
@@ -42,7 +42,7 @@ const outputs=await packager({dir:stage,name:'TerrainWorkshop',executableName:'T
   asar:false,prune:false,overwrite:false,tmpdir:temporary,electronZipDir,download:{cacheRoot:path.join(root,'artifacts','electron-cache')},
   appCopyright:'TerrainWorkshop contributors; third-party licenses included',
 });
-for(const output of outputs)for(const document of ['更新说明-v0.4.7.txt','最终验证清单-v0.4.7.txt']) {
+for(const output of outputs)for(const document of ['更新说明-v0.4.8.txt','最终验证清单-v0.4.8.txt']) {
   await cp(path.join(root,document),path.join(output,document),{errorOnExist:true,force:false});
 }
 await writeFile(path.join(root,'artifacts','desktop-packaging','latest.json'),JSON.stringify({stage,outputs,version:application.version,electron:sourcePackage.devDependencies.electron},null,2)+'\n');
