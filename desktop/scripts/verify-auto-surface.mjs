@@ -117,6 +117,11 @@ export async function publishTerrainOutput(...args) {
   const ready = label => js(`[...document.querySelectorAll('button')].some(el => el.textContent === ${JSON.stringify(label)} && !el.disabled)`);
   const click = label => js(`(() => { const el = [...document.querySelectorAll('button')].find(el => el.textContent === ${JSON.stringify(label)}); if (!el || el.disabled) throw Error('Button unavailable'); el.click(); })()`);
   const select = (selector, value) => js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw Error('Select missing'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  const input = async (selector, value) => {
+    await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!(el instanceof HTMLInputElement) || el.disabled) throw Error('Input unavailable: ' + ${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(String(value))}); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    // Each RGB edit updates the shared picker value and its other channel drafts.
+    await delay(50);
+  };
   const capture = async name => { await delay(150); await writeFile(join(output, name), (await window.webContents.capturePage()).toPNG()); };
   const calls = async () => (await readFile(providerLog, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
   const footerVisible = () => js(`(() => {
@@ -127,7 +132,7 @@ export async function publishTerrainOutput(...args) {
   const finishGeneration = async label => { await wait(() => lastJob && lastJob.id !== finishedJobId && !['running', 'cancelling'].includes(lastJob.state), label); finishedJobId = lastJob.id; };
 
   await wait(() => ready('导入路线'), 'startup');
-  assert.deepEqual(await js("[...document.querySelector('#image-mode').options].map(option => option.textContent)"), ['不使用', '最近一个夏季（6–8月）', '最近两个夏季（6–8月）', '本地导入']);
+  assert.deepEqual(await js("[...document.querySelector('#image-mode').options].map(option => option.textContent)"), ['不使用', '最近一个夏季（6–8月）', '最近两个夏季（6–8月）', '最近三个夏季（6–8月）', '最近四个夏季（6–8月）', '最近五个夏季（6–8月）', '本地导入']);
   assert.equal(await js("document.querySelector('#image-mode')?.value ?? null"), '24', 'fresh startup preserves the existing 24-month imagery horizon');
   assert.equal(await ready('选择地表影像'), false, 'local image picker must be available only in local mode');
   await click('导入路线'); await wait(() => ready('生成模型'), 'route imported');
@@ -151,9 +156,18 @@ export async function publishTerrainOutput(...args) {
   const displayed = await js("document.querySelector('.model-image-source')?.textContent ?? ''");
   assert.match(displayed, /Sentinel-2/); assert.match(displayed, /2026-07-21/); assert.match(displayed, /2026-07-26/); assert.match(displayed, /在线获取/);
   await click('保存彩色 3MF'); await wait(() => saves.length === 1 && ready('保存彩色 3MF'), 'automatic color export');
-  await js("(() => { const el = document.querySelector('#grass-color'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '#005522'); el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); })();");
+  const paletteJobId = lastJob.id, paletteStartCount = starts.length, paletteProviderCount = (await calls()).length, paletteStlSha256 = lastJob.result.stlSha256;
+  await js("(() => { const el = document.querySelector('button[aria-label=\"编辑草地颜色\"]'); if (!(el instanceof HTMLButtonElement) || el.disabled) throw Error('Grass palette button unavailable'); el.click(); })()");
+  await wait(() => js("document.querySelector('.route-color-picker legend')?.textContent === '草地颜色'"), 'shared grass color picker selected');
+  for (const [channel, value] of [['R', 0], ['G', 85], ['B', 34]]) await input(`[aria-label="草地颜色 ${channel}"]`, value);
+  await wait(() => js("document.querySelector('[aria-label=\"当前草地颜色\"]')?.textContent === '#005522' && document.querySelector('button[aria-label=\"编辑草地颜色\"]')?.title === '#005522'"), 'shared palette has the selected RGB color');
+  await wait(async () => (await session.getSession()).preferences.options.grassColor === '#005522', 'grass palette color persisted');
   assert.equal(await ready('保存彩色 3MF'), true, 'palette edits must keep geometry exportable');
   assert.equal(await js("!!document.querySelector('.saved-path')"), false);
+  assert.equal(lastJob.id, paletteJobId, 'palette edits must retain the completed generation');
+  assert.equal(starts.length, paletteStartCount, 'palette edits must not start a generation');
+  assert.equal((await calls()).length, paletteProviderCount, 'palette edits must not acquire imagery');
+  assert.equal(lastJob.result.stlSha256, paletteStlSha256, 'palette edits must preserve the geometry');
   await capture('02-auto-source.png');
   await select('#image-mode', '12'); await wait(() => ready('重新生成'), '12-month source selected');
   assert.equal(await ready('保存彩色 3MF'), false, 'changing only the date horizon invalidates the old model');
@@ -165,6 +179,24 @@ export async function publishTerrainOutput(...args) {
   assert.equal(lastStart.imageLookbackMonths, 12); assert.equal((await calls()).at(-1).lookbackMonths, 12);
   await wait(() => ready('保存彩色 3MF'), 'cached automatic result');
   assert.match(await js("document.querySelector('.model-image-source').textContent"), /使用缓存/);
+  for (const period of ['36', '48', '60']) {
+    await select('#image-mode', period);
+    await wait(async () => (await session.getSession()).preferences.imageLookbackMonths === Number(period), `${period}-month source persisted`);
+    await control({ mode: 'success', cacheHit: false });
+    await wait(async () => await ready('重新生成') || await ready('生成模型'), `${period}-month generation controls ready`);
+    await click(await ready('重新生成') ? '重新生成' : '生成模型');
+    await finishGeneration(`${period}-month selection reaches worker`);
+    assert.equal(lastJob.state, 'succeeded', lastJob.error?.message);
+    assert.equal(lastStart.imageLookbackMonths, Number(period));
+    assert.equal((await calls()).at(-1).lookbackMonths, Number(period));
+    const reloaded = new Promise(resolve => window.webContents.once('did-finish-load', resolve)); window.reload(); await reloaded;
+    await wait(() => ready('恢复上次项目'), `${period}-month project available`);
+    await click('恢复上次项目'); await wait(() => ready('生成模型'), `${period}-month project restored`);
+    assert.equal(await js("document.querySelector('#image-mode').value"), period);
+  }
+  await select('#image-mode', '12');
+  await wait(async () => (await session.getSession()).preferences.imageLookbackMonths === 12, 'restore legacy 12-month selection');
+  await wait(async () => await ready('重新生成') || await ready('生成模型'), 'legacy 12-month generation controls ready before reload');
   let loaded = new Promise(resolve => window.webContents.once('did-finish-load', resolve)); window.reload(); await loaded;
   await wait(() => ready('恢复上次项目'), 'reload auto project'); await click('恢复上次项目'); await wait(() => ready('生成模型'), 'auto project restored');
   assert.equal(await js("document.querySelector('#image-mode').value"), '12'); assert.equal(await ready('选择地表影像'), false);

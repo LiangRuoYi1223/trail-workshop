@@ -10,17 +10,21 @@ import type { SentinelColorImage, SentinelImageOptions, SentinelSceneSource, Sur
 import { DownloadBudget, imageFail, readBoundedBody, safeSentinelAsset, SentinelImageError, SentinelRangeClient } from './online-remote.js';
 import { projectUtm } from './online-utm.js';
 import { validateCacheDirectory } from './online-range-cache.js';
+import { createSurfaceCoverageDomain, repairSurfaceGaps, type SurfaceCoverageDomain } from './surface-coverage.js';
 export { SentinelImageError } from './online-remote.js';
 
 const COLLECTION='sentinel-2-c1-l2a',SEARCH='https://earth-search.aws.element84.com/v1/search';
 const MAX_WINDOW_PIXELS=4_000_000,MAX_BLOCK_PIXELS=1_048_576,MAX_OUTPUT_PIXELS=1_048_576;
-const MAX_CANDIDATES=72,MAX_SCENES=24,TIMEOUT_MS=600_000;
+const MAX_CANDIDATES=72,MAX_SCENES_PER_SUMMER=24,MAX_SCENES=120,TIMEOUT_MS=600_000;
 const METERS_PER_DEGREE=111320;
 interface Candidate extends SentinelSceneSource {visual:string;scl:string;tile:string}
 interface Mapping {epsg:number;width:number;height:number;dx:number;dy:number;x:number;y:number}
 interface SelectedRaster extends Mapping {window:[number,number,number,number];channels:number;image:GeoTIFFImage;tiff:GeoTIFF;client:SentinelRangeClient}
 interface DemandGroup {window:[number,number,number,number];points:number[];pixels:number[];tiles:number[];westTile:number;eastTile:number;northTile:number;southTile:number}
-interface CacheHeader {schema:1;collection:typeof COLLECTION;bounds:Bounds;width:number;height:number;scenes:SentinelSceneSource[];retrievedAt:string;attribution:string}
+type SummerHorizon=12|24|36|48|60;
+type Footprint=ReadonlyArray<{lat:number;lon:number}>;
+interface ModelCoverage {version:1;footprint:Footprint;grassSensitivity:number;modelPixels:number;filledPixels:number}
+interface CacheHeader {schema:1;collection:typeof COLLECTION;bounds:Bounds;width:number;height:number;scenes:SentinelSceneSource[];retrievedAt:string;attribution:string;modelCoverage?:ModelCoverage}
 interface Manifest extends CacheHeader {dataFile:string;dataSha256:string;integrity:string}
 
 function validBounds(value:Bounds):Bounds {
@@ -38,32 +42,38 @@ function dimensions(bounds:Bounds):{width:number;height:number} {
   return {width,height};
 }
 const sha=(bytes:Uint8Array|string):string=>createHash('sha256').update(bytes).digest('hex');
-const cacheKey=(bounds:Bounds):string=>sha(JSON.stringify({schema:1,collection:COLLECTION,bounds}));
+const cacheKey=(bounds:Bounds,footprint?:Footprint,grassSensitivity=50):string=>sha(JSON.stringify(footprint?
+  {schema:2,collection:COLLECTION,bounds,footprint,grassSensitivity,coverageVersion:1}:{schema:1,collection:COLLECTION,bounds}));
 const payloadName=(key:string,digest:string):string=>`sentinel-${key.slice(0,16)}-${digest.slice(0,32)}.rgb`;
 function attribution(scenes:SentinelSceneSource[]):string {
   return `Contains modified Copernicus Sentinel data ${Array.from(new Set(scenes.map(scene=>scene.datetime.slice(0,4)))).sort().join(', ')}`;
 }
 function headerOf(manifest:CacheHeader):CacheHeader {
   return {schema:1,collection:COLLECTION,bounds:manifest.bounds,width:manifest.width,height:manifest.height,
-    scenes:manifest.scenes,retrievedAt:manifest.retrievedAt,attribution:manifest.attribution};
+    scenes:manifest.scenes,retrievedAt:manifest.retrievedAt,attribution:manifest.attribution,
+    ...(manifest.modelCoverage?{modelCoverage:manifest.modelCoverage}:{})};
 }
 function integrity(header:CacheHeader,bytes:Uint8Array):string {
   return createHash('sha256').update(JSON.stringify(header)).update(bytes).digest('hex');
 }
 function result(header:CacheHeader,bytes:Uint8Array,cacheHit:boolean):SentinelColorImage {
   const {bounds,width,height,scenes,retrievedAt}=header;
+  const domain=header.modelCoverage?coverageDomain(bounds,width,height,header.modelCoverage.footprint):undefined;
   // Operational cache state and retrieval time are excluded from appearance identity.
-  const identity={collection:COLLECTION,bounds,width,height,scenes};
+  const identity={collection:COLLECTION,bounds,width,height,scenes,...(header.modelCoverage?{modelCoverage:header.modelCoverage}:{})};
   const metadata:ColorImageMetadata={sha256:createHash('sha256').update(JSON.stringify(identity)).update(bytes).digest('hex'),
     byteLength:bytes.length,width,height,bounds:{...bounds},crs:'EPSG:4326',pixelIsArea:true};
   const image:ColorImage={metadata,sample(lat,lon) {
     if(!Number.isFinite(lat)||!Number.isFinite(lon)||lon<bounds.west||lon>bounds.east||lat<bounds.south||lat>bounds.north)return null;
     const column=Math.min(width-1,Math.floor((lon-bounds.west)/(bounds.east-bounds.west)*width));
     const row=Math.min(height-1,Math.floor((bounds.north-lat)/(bounds.north-bounds.south)*height));
-    const index=(row*width+column)*3;return {r:bytes[index],g:bytes[index+1],b:bytes[index+2]};
+    const cell=row*width+column,index=cell*3;
+    if(domain&&(!domain.demand[cell]||(bytes[index]===0&&bytes[index+1]===0&&bytes[index+2]===0)))return null;
+    return {r:bytes[index],g:bytes[index+1],b:bytes[index+2]};
   }};
   const source:SurfaceImageSource={provider:'Sentinel-2',collection:COLLECTION,scenes:scenes.map(scene=>({...scene})),
-    cacheHit,retrievedAt,bounds:{...bounds},attribution:header.attribution};
+    cacheHit,retrievedAt,bounds:{...bounds},attribution:header.attribution,
+    ...(header.modelCoverage?{coverageRepair:{filledPixels:header.modelCoverage.filledPixels,modelPixels:header.modelCoverage.modelPixels}}:{})};
   return {image,source};
 }
 async function readSmallFile(path:string,limit:number):Promise<Uint8Array> {
@@ -90,8 +100,8 @@ function validScene(value:unknown):value is SentinelSceneSource {
     &&Number.isFinite(Date.parse(scene.datetime))&&scene.datetime===new Date(scene.datetime).toISOString()
     &&Number.isFinite(scene.cloudCover)&&scene.cloudCover>=0&&scene.cloudCover<=100;
 }
-/** June-August in the latest one/two northern summer seasons, capped at today. */
-function summerIntervals(now:Date,lookbackMonths:12|24):Array<{start:Date;end:Date}> {
+/** June-August in the selected latest one through five northern summers, capped at today. */
+function summerIntervals(now:Date,lookbackMonths:SummerHorizon):Array<{start:Date;end:Date}> {
   const latestYear=now.getUTCFullYear()-(now.getUTCMonth()<5?1:0);
   return Array.from({length:lookbackMonths/12},(_,index)=>{
     const year=latestYear-lookbackMonths/12+1+index;
@@ -102,10 +112,23 @@ function eligibleSummerDate(datetime:string,intervals:Array<{start:Date;end:Date
   const time=Date.parse(datetime);
   return Number.isFinite(time)&&intervals.some(({start,end})=>time>=start.getTime()&&time<=end.getTime());
 }
-async function readCache(directory:string,bounds:Bounds,now:Date,lookbackMonths:12|24):Promise<SentinelColorImage|null> {
+function validFootprint(value:Footprint|undefined,bounds:Bounds):Footprint|undefined {
+  if(value===undefined)return undefined;
+  if(!Array.isArray(value)||value.length<3||value.length>4096||value.some(point=>!point||!Number.isFinite(point.lat)||!Number.isFinite(point.lon)
+    ||point.lat<bounds.south-1e-10||point.lat>bounds.north+1e-10||point.lon<bounds.west-1e-10||point.lon>bounds.east+1e-10))
+    imageFail('IMAGE_REQUEST_INVALID','地表影像的模型轮廓无效或超出取景范围，请重新取景');
+  return value.map(point=>({lat:point.lat,lon:point.lon}));
+}
+function coverageDomain(bounds:Bounds,width:number,height:number,footprint:Footprint):SurfaceCoverageDomain {
+  return createSurfaceCoverageDomain({width,height,polygon:footprint.map(point=>({
+    x:(point.lon-bounds.west)/(bounds.east-bounds.west)*width,y:(bounds.north-point.lat)/(bounds.north-bounds.south)*height})),
+    pixelWidthM:(bounds.east-bounds.west)*METERS_PER_DEGREE*Math.cos((bounds.north+bounds.south)*Math.PI/360)/width,
+    pixelHeightM:(bounds.north-bounds.south)*METERS_PER_DEGREE/height});
+}
+async function readCache(directory:string,bounds:Bounds,now:Date,lookbackMonths:SummerHorizon,footprint?:Footprint,grassSensitivity=50):Promise<SentinelColorImage|null> {
   try {
     await validateCacheDirectory(directory);
-    const key=cacheKey(bounds),manifest=JSON.parse(new TextDecoder().decode(await readSmallFile(join(directory,`sentinel-${key}.json`),256*1024))) as Manifest;
+    const key=cacheKey(bounds,footprint,grassSensitivity),manifest=JSON.parse(new TextDecoder().decode(await readSmallFile(join(directory,`sentinel-${key}.json`),256*1024))) as Manifest;
     const size=dimensions(bounds);
     if(manifest.schema!==1||manifest.collection!==COLLECTION||JSON.stringify(manifest.bounds)!==JSON.stringify(bounds)
       ||manifest.width!==size.width||manifest.height!==size.height||!Array.isArray(manifest.scenes)||manifest.scenes.length<1
@@ -114,13 +137,17 @@ async function readCache(directory:string,bounds:Bounds,now:Date,lookbackMonths:
       ||manifest.scenes.some(scene=>!eligibleSummerDate(scene.datetime,summerIntervals(now,lookbackMonths)))
       ||manifest.attribution!==attribution(manifest.scenes)
       ||!/^[a-f0-9]{64}$/u.test(manifest.dataSha256)||manifest.dataFile!==payloadName(key,manifest.dataSha256))return null;
+    const model=manifest.modelCoverage;
+    if(footprint?(!model||model.version!==1||JSON.stringify(model.footprint)!==JSON.stringify(footprint)||model.grassSensitivity!==grassSensitivity
+      ||model.modelPixels!==coverageDomain(bounds,size.width,size.height,footprint).modelCount||!Number.isSafeInteger(model.filledPixels)
+      ||model.filledPixels<0||model.filledPixels/model.modelPixels>=.01):model!==undefined)return null;
     const bytes=await readSmallFile(join(directory,manifest.dataFile),MAX_OUTPUT_PIXELS*3),header=headerOf(manifest);
     if(bytes.length!==manifest.width*manifest.height*3||sha(bytes)!==manifest.dataSha256||integrity(header,bytes)!==manifest.integrity)return null;
     await validateCacheDirectory(directory);return result(header,bytes,true);
   } catch {return null;}
 }
 async function writeCache(directory:string,header:CacheHeader,bytes:Uint8Array,signal:AbortSignal):Promise<void> {
-  const key=cacheKey(header.bounds),dataSha256=sha(bytes),dataFile=payloadName(key,dataSha256);
+  const key=cacheKey(header.bounds,header.modelCoverage?.footprint,header.modelCoverage?.grassSensitivity),dataSha256=sha(bytes),dataFile=payloadName(key,dataSha256);
   const manifest:Manifest={...header,dataFile,dataSha256,integrity:integrity(header,bytes)};
   const suffix=`.${randomUUID()}.tmp`,temporaryData=join(directory,dataFile+suffix),temporaryManifest=join(directory,`sentinel-${key}.json${suffix}`);
   try {
@@ -133,7 +160,7 @@ async function writeCache(directory:string,header:CacheHeader,bytes:Uint8Array,s
     await rm(temporaryData,{force:true}).catch(()=>{});await rm(temporaryManifest,{force:true}).catch(()=>{});
   }
 }
-async function catalog(bounds:Bounds,fetch:typeof globalThis.fetch,now:Date,signal:AbortSignal,lookbackMonths:12|24,budget:DownloadBudget):Promise<Candidate[]> {
+async function catalog(bounds:Bounds,fetch:typeof globalThis.fetch,now:Date,signal:AbortSignal,lookbackMonths:SummerHorizon,budget:DownloadBudget):Promise<Candidate[]> {
   const intervals=summerIntervals(now,lookbackMonths),candidates:Candidate[]=[];
   // Query each summer separately so low-cloud winter scenes cannot exhaust the result limit.
   for(const {start,end} of intervals) {
@@ -169,19 +196,24 @@ async function catalog(bounds:Bounds,fetch:typeof globalThis.fetch,now:Date,sign
   }
   // Tile cloud scores describe the whole ~110km tile, not this small AOI. Within
   // similarly clear five-percent buckets prefer fresh imagery, then verify actual SCL pixels.
-  candidates.sort((a,b)=>Math.floor(a.cloudCover/5)-Math.floor(b.cloudCover/5)
+  candidates.sort((a,b)=>new Date(b.datetime).getUTCFullYear()-new Date(a.datetime).getUTCFullYear()||Math.floor(a.cloudCover/5)-Math.floor(b.cloudCover/5)
     ||Date.parse(b.datetime)-Date.parse(a.datetime)||a.cloudCover-b.cloudCover||a.id.localeCompare(b.id));
   // Round-robin tiles so a very clear tile cannot starve another tile of candidates.
-  const groups=new Map<string,Candidate[]>();for(const candidate of candidates) {
-    const group=groups.get(candidate.tile)??[];group.push(candidate);groups.set(candidate.tile,group);
-  }
   const ordered:Candidate[]=[];
-  while(ordered.length<MAX_SCENES) {
-    let added=false;for(const group of groups.values()) {
-      const candidate=group.shift();if(candidate){ordered.push(candidate);added=true;}
-      if(ordered.length===MAX_SCENES)break;
+  const years=[...new Set(candidates.map(candidate=>new Date(candidate.datetime).getUTCFullYear()))];
+  for(const year of years) {
+    const groups=new Map<string,Candidate[]>();for(const candidate of candidates) {
+      if(new Date(candidate.datetime).getUTCFullYear()!==year)continue;
+      const group=groups.get(candidate.tile)??[];group.push(candidate);groups.set(candidate.tile,group);
     }
-    if(!added)break;
+    let selected=0;
+    while(selected<MAX_SCENES_PER_SUMMER) {
+      let added=false;for(const group of groups.values()) {
+        const candidate=group.shift();if(candidate){ordered.push(candidate);selected++;added=true;}
+        if(selected===MAX_SCENES_PER_SUMMER)break;
+      }
+      if(!added)break;
+    }
   }
   if(!ordered.length)imageFail('IMAGE_SCENE_UNAVAILABLE',`最近 ${lookbackMonths/12} 个夏季（6–8月）没有可用的 Sentinel-2 地表影像，请重试或本地导入`);
   return ordered;
@@ -346,9 +378,12 @@ function boundaryPoints(bounds:Bounds,width:number,height:number):Array<{lat:num
 export async function loadSentinelColorImage(requested:Bounds,options:SentinelImageOptions):Promise<SentinelColorImage> {
   const bounds=validBounds(requested);
   if(!options||typeof options.cacheDir!=='string'||!options.cacheDir.trim())imageFail('IMAGE_CACHE_REQUIRED','自动影像需要有效的本地缓存目录');
-  if(options.lookbackMonths!==undefined&&options.lookbackMonths!==12&&options.lookbackMonths!==24)
-    imageFail('IMAGE_REQUEST_INVALID','地表影像时间范围无效，请选择最近一个或两个夏季后重试');
+  if(options.lookbackMonths!==undefined&&![12,24,36,48,60].includes(options.lookbackMonths))
+    imageFail('IMAGE_REQUEST_INVALID','地表影像时间范围无效，请选择最近 1–5 个夏季后重试');
   const lookbackMonths=options.lookbackMonths??24;
+  const footprint=validFootprint(options.modelFootprint,bounds),grassSensitivity=options.grassSensitivity??50;
+  if(!Number.isFinite(grassSensitivity)||grassSensitivity<0||grassSensitivity>100)imageFail('IMAGE_REQUEST_INVALID','草地识别灵敏度须在 0–100 之间');
+  const size=dimensions(bounds),domain=footprint?coverageDomain(bounds,size.width,size.height,footprint):undefined;
   const directory=resolve(options.cacheDir),timeout=AbortSignal.timeout(Math.min(TIMEOUT_MS,Math.max(1,options.timeoutMs??TIMEOUT_MS)));
   const taskAbort=new AbortController(),signal=AbortSignal.any(options.signal?[options.signal,timeout,taskAbort.signal]:[timeout,taskAbort.signal]);
   let progress=.02,coverage=0,downloadMessage='正在下载公开 Sentinel-2 影像',sceneId:string|undefined,sceneDate:string|undefined,sceneContribution=0,attemptedScenes=0;
@@ -363,22 +398,22 @@ export async function loadSentinelColorImage(requested:Bounds,options:SentinelIm
     signal.throwIfAborted();
     const now=(options.now??(()=>new Date()))();
     if(!Number.isFinite(now.getTime()))imageFail('IMAGE_METADATA_INVALID','卫星影像获取时间无效');
-    const cached=await readCache(directory,bounds,now,lookbackMonths);signal.throwIfAborted();
+    const cached=await readCache(directory,bounds,now,lookbackMonths,footprint,grassSensitivity);signal.throwIfAborted();
     if(cached) {progress=1;coverage=1;budget.cacheBytes=cached.image.metadata.byteLength;
       report('complete','已读取经过完整性校验的卫星影像缓存');return cached;}
     if(options.offlineOnly)imageFail('IMAGE_CACHE_MISS','此取景范围没有符合夏季日期的完整有效影像缓存，请联网重试或本地导入');
     const fetch=options.fetch??globalThis.fetch;
     report('query',`正在查询最近 ${lookbackMonths/12} 个夏季（6–8月）的公开 Sentinel-2 影像`);
-    const candidates=await catalog(bounds,fetch,now,signal,lookbackMonths,budget),{width,height}=dimensions(bounds);
+    const candidates=await catalog(bounds,fetch,now,signal,lookbackMonths,budget),{width,height}=size;
     const bytes=new Uint8Array(width*height*3),covered=new Uint8Array(width*height),scenes:SentinelSceneSource[]=[];
     // Pixel centers alone could hide missing strips at the requested rectangle's edges.
-    const boundary=boundaryPoints(bounds,width,height),coverageCount=covered.length+boundary.length;
+    const boundary=domain?[]:boundaryPoints(bounds,width,height),coverageCount=domain?.modelCount??covered.length+boundary.length;
     let remaining=coverageCount;
     const pointAt=(index:number):{lat:number;lon:number}=>index<covered.length?
       {lat:bounds.north-(Math.floor(index/width)+.5)/height*(bounds.north-bounds.south),
         lon:bounds.west+(index%width+.5)/width*(bounds.east-bounds.west)}:boundary[index-covered.length];
     function* missingPoints():Generator<number> {
-      for(let index=0;index<covered.length;index++)if(!covered[index])yield index;
+      for(let index=0;index<covered.length;index++)if(!covered[index]&&(!domain||domain.demand[index]))yield index;
       for(let index=0;index<boundary.length;index++)if(!boundary[index].covered)yield covered.length+index;
     }
     for(let index=0;index<candidates.length&&remaining;index++) {
@@ -386,7 +421,7 @@ export async function loadSentinelColorImage(requested:Bounds,options:SentinelIm
       progress=.05+.85*index/candidates.length;
       downloadMessage=`正在读取 ${candidate.datetime.slice(0,10)} 云层分类并检查缺口（${index+1}/${candidates.length}）`;
       report('download',downloadMessage);
-      const eligible=new Uint8Array(coverageCount);let eligibleCount=0;
+      const eligible=new Uint8Array(covered.length+boundary.length);let eligibleCount=0;
       const scl=await openRaster(candidate.scl,1,bounds,fetch,signal,budget,directory);
       if(!scl)continue;
       try {
@@ -404,7 +439,7 @@ export async function loadSentinelColorImage(requested:Bounds,options:SentinelIm
           await readDemandPixels(rgb,eligiblePoints(),pointAt,signal,(point,values,offset)=>{
             const r=values[offset],g=values[offset+1],b=values[offset+2];if(r===0&&g===0&&b===0)return;
             if(point<covered.length){bytes.set([r,g,b],point*3);covered[point]=1;}else boundary[point-covered.length].covered=true;
-            remaining--;added++;
+            if(!domain||domain.model[point])remaining--;added++;
           },budget);
         } finally {await rgb.tiff.close();}
       }
@@ -413,12 +448,19 @@ export async function loadSentinelColorImage(requested:Bounds,options:SentinelIm
       report('cloud',eligibleCount?`已校验云层与彩色像元，取景覆盖 ${(coverage*100).toFixed(1)}%`:
         `此景不能补上未覆盖缺口，已跳过彩色影像；取景覆盖 ${(coverage*100).toFixed(1)}%`);
     }
-    if(remaining)imageFail('IMAGE_COVERAGE_INSUFFICIENT',`夏季覆盖不足：仍有 ${(remaining/coverageCount*100).toFixed(1)}% 中心或边缘存在云层、无效彩色像元或缺失覆盖；请重试、缩小取景范围或本地导入`);
-    const header:CacheHeader={schema:1,collection:COLLECTION,bounds,width,height,scenes,retrievedAt:now.toISOString(),attribution:attribution(scenes)};
+    let filledPixels=0;
+    if(remaining&&domain) {
+      filledPixels=repairSurfaceGaps({bytes,covered,domain,grassSensitivity,signal}).repaired;
+      remaining=0;
+    }
+    if(remaining)imageFail('IMAGE_COVERAGE_INSUFFICIENT',`夏季覆盖不足：仍有 ${remaining} 个中心或边缘采样点（${(remaining/coverageCount*100).toFixed(6)}%）存在云层、无效彩色像元或缺失覆盖；请重试、缩小取景范围或本地导入`);
+    const header:CacheHeader={schema:1,collection:COLLECTION,bounds,width,height,scenes,retrievedAt:now.toISOString(),attribution:attribution(scenes),
+      ...(footprint?{modelCoverage:{version:1,footprint,grassSensitivity,modelPixels:coverageCount,filledPixels}}:{})};
     try {await writeCache(directory,header,bytes,signal);} catch(error) {
       if(signal.aborted)throw error;throw new SentinelImageError('IMAGE_CACHE_WRITE_FAILED','卫星影像缓存无法保存，请检查可用空间后重试',error);
     }
-    signal.throwIfAborted();progress=1;coverage=1;report('complete','卫星影像已完整覆盖取景范围并通过云层筛选');
+    signal.throwIfAborted();progress=1;coverage=1;report('complete',filledPixels?`模型地表已通过覆盖校验，依据邻近草地或山石补齐 ${filledPixels} 个小缺口采样点`:
+      domain?'卫星影像已覆盖实际模型轮廓并通过云层筛选':'卫星影像已完整覆盖取景范围并通过云层筛选');
     return result(header,bytes,false);
   } catch(error) {
     taskAbort.abort(error);

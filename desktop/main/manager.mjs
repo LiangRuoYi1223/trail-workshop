@@ -8,6 +8,7 @@ import { createJobTiming, createTimingHistory, probeTimingCache, timingFeatures 
 import { DesktopError, checkedInput, publicError, removeOwnedTask, validateOptions, verifyOutput } from './files.mjs';
 import {createBaseTextPreview} from './base-text-preview.mjs';
 import { LARGE_ROUTE_WARNING_BYTES, MAX_ROUTE_BYTES } from './route-limits.mjs';
+import { terrainImageFootprint } from './surface-footprint.mjs';
 
 const MAX_DEM_BYTES = 256 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
@@ -25,7 +26,7 @@ function checkedPhaseProgress(value) {
   for (const field of ['downloadedBytes', 'cacheBytes', 'requestCount', 'catalogRequestCount', 'rangeRequestCount', 'downloadBudgetBytes', 'reservedBytes', 'sceneContribution']) {
     if (Number.isSafeInteger(value[field]) && value[field] >= 0) progress[field] = value[field];
   }
-  for (const [field,maximum] of [['retryCount',2],['attemptedScenes',24]]) {
+  for (const [field,maximum] of [['retryCount',2],['attemptedScenes',120]]) {
     if (Number.isSafeInteger(value[field]) && value[field]>=0 && value[field]<=maximum) progress[field]=value[field];
   }
   if (safeSourceText(value.sceneId)) progress.sceneId=safeSourceText(value.sceneId);
@@ -51,12 +52,15 @@ function checkedImageSource(source, bounds) {
       || !Number.isFinite(scene.cloudCover) || scene.cloudCover < 0 || scene.cloudCover > 100)
     || typeof source.cacheHit !== 'boolean' || typeof source.retrievedAt !== 'string' || !Number.isFinite(Date.parse(source.retrievedAt))
     || !source.bounds || ['west', 'south', 'east', 'north'].some(key => !Number.isFinite(source.bounds[key]) || source.bounds[key] !== bounds[key])
+    || (source.coverageRepair !== undefined && (!Number.isSafeInteger(source.coverageRepair?.filledPixels) || source.coverageRepair.filledPixels < 0
+      || !Number.isSafeInteger(source.coverageRepair.modelPixels) || source.coverageRepair.modelPixels <= 0 || source.coverageRepair.filledPixels >= source.coverageRepair.modelPixels * .01))
     || (source.attribution !== undefined && !safeSourceText(source.attribution))) {
     throw new DesktopError('OUTPUT_INVALID', '自动地表影像来源或取景校验失败，请重试或切换本地导入');
   }
   return { provider: source.provider, collection: source.collection,
     scenes: source.scenes.map(({ id, datetime, cloudCover }) => ({ id, datetime, cloudCover })),
     cacheHit: source.cacheHit, retrievedAt: source.retrievedAt, bounds: { ...source.bounds },
+    ...(source.coverageRepair ? { coverageRepair: { filledPixels: source.coverageRepair.filledPixels, modelPixels: source.coverageRepair.modelPixels } } : {}),
     ...(source.attribution ? { attribution: source.attribution } : {}) };
 }
 
@@ -305,7 +309,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       ensureOpen();
       if (active) throw new DesktopError('JOB_BUSY', '已有任务正在计算，请等待或取消后再生成');
       const mode = demMode === undefined ? (demId === undefined ? 'auto' : 'local') : demMode;
-      if (!['auto', 'local'].includes(mode) || !['auto', 'local', 'none'].includes(imageMode) || ![12, 24].includes(imageLookbackMonths)
+      if (!['auto', 'local'].includes(mode) || !['auto', 'local', 'none'].includes(imageMode) || ![12, 24, 36, 48, 60].includes(imageLookbackMonths)
         || typeof offlineOnly !== 'boolean' || typeof imageOfflineOnly !== 'boolean') throw new DesktopError('CONFIG_INVALID', '请选择有效的高程、地表影像来源及离线设置');
       const route = routes.get(routeId), dem = mode === 'local' ? dems.get(demId) : undefined;
       const image = imageMode === 'local' && imageId !== undefined ? images.get(imageId) : undefined;
@@ -317,8 +321,12 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       const validated = validateOptions(options), core = await corePromise;
       // Compute the same geographic footprint used by inspect and generation.
       // No renderer-supplied bounds or data URLs enter the worker request.
-      let bounds;
-      try { bounds = Object.freeze({ ...core.createTerrainFrame(route.info.segments.flat(), validated).bounds }); }
+      let bounds, modelFootprint;
+      try {
+        const frame = core.createTerrainFrame(route.info.segments.flat(), validated);
+        bounds = Object.freeze({ ...frame.bounds });
+        if (imageMode === 'auto') modelFootprint = terrainImageFootprint(core, frame, validated.gridColumns);
+      }
       catch (error) { const issue = publicError(error, '无法建立路线取景，请检查尺寸'); throw new DesktopError(issue.code, issue.message); }
       ensureOpen();
       if (active) throw new DesktopError('JOB_BUSY', '已有任务正在计算，请等待或取消后再生成');
@@ -331,7 +339,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
       jobs.set(id, job); active = id;
       enterPhase(job, 'prepare');
       try {
-        job.timingFeatures = timingFeatures({ route: route.info, options: validated, bounds, demMode: mode, imageMode, imageLookbackMonths,
+        job.timingFeatures = timingFeatures({ route: route.info, options: validated, bounds, modelFootprint, demMode: mode, imageMode, imageLookbackMonths,
           demBytes: dem?.source.bytes, imageBytes: image?.source.bytes });
         job.preparationController = new AbortController();
         const probeSignal = job.preparationController.signal;
@@ -341,7 +349,7 @@ export function createDesktopManager({ taskRoot, coreModuleUrl, workerFactory, d
         const probeTimer = setTimeout(() => job.preparationController.abort(), 5000);
         try {
           job.timingCache = await Promise.race([probeTimingCache({ core, bounds, demMode: mode, imageMode, hasLocalImage: Boolean(image),
-            demCacheDir: cacheDir, imageCacheDir: surfaceCacheDir, imageLookbackMonths, signal: probeSignal, clock }), aborted]);
+            demCacheDir: cacheDir, imageCacheDir: surfaceCacheDir, imageLookbackMonths, modelFootprint, grassSensitivity: validated.grassSensitivity, signal: probeSignal, clock }), aborted]);
         } finally { clearTimeout(probeTimer); probeSignal.removeEventListener('abort', abortProbe); }
         const estimate = await timingHistory.estimate(job.timingFeatures, job.timingCache);
         job.timing = createJobTiming({ estimate, startedAtMs: acceptedAtMs, monotonicNow, clock });

@@ -22,7 +22,7 @@ async function run(){
   await app.whenReady();protocol.handle('terrain-map',()=>new Response(null,{status:404}));
   const handle=(name,fn)=>ipcMain.handle('terrain:'+name,async(_,...args)=>({ok:true,value:await fn(...args)}));
   const session={schemaVersion:1,preferences:{options:{},demMode:'auto',imageMode:'auto',imageLookbackMonths:24,offlineOnly:false},warnings:[]};
-  handle('runtime',()=>({version:'0.4.10',platform:'win32',packaged:false,units:'mm'}));
+  handle('runtime',()=>({version:'0.4.11',platform:'win32',packaged:false,units:'mm'}));
   handle('cache-info',()=>({path:output,elevationBytes:0,imageBytes:0,mapBytes:0}));
   handle('session-get',()=>session);handle('session-save',request=>{session.preferences={options:request.options,demMode:request.demMode,imageMode:request.imageMode,imageLookbackMonths:request.imageLookbackMonths,offlineOnly:request.offlineOnly};return session;});
   for(const name of ['start','save-model','choose-route','choose-dem','choose-image','clear-cache'])handle(name,()=>{report.modelActions++;throw Error('Usage guide must not perform model actions');});

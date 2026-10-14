@@ -7,7 +7,7 @@ import SharedPrintColors from './components/SharedPrintColors';
 import { geometryOptions, printPaletteCount, appearanceOptions, plannedPrintPaletteCount, previewPrintClasses } from './route-color';
 import { acquisitionRows, elapsedLabel, failurePresentation, idleStatus, phaseLabel, estimateLabel, elapsedDurationLabel, totalDurationLabel, durationLabel } from './job-progress';
 import { clampTextEdgeIndex, validateTextPlacement } from './text-placement';
-import type { CacheInfo, DemInfo, ImageInfo, ImageMode, SurfaceImageSource, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
+import type { CacheInfo, DemInfo, ImageInfo, ImageMode, ImageLookbackMonths, SurfaceImageSource, GeoPoint, Inspection, Job, ModelOptions, Preview, Result, RouteInfo, RuntimeInfo, SessionInfo } from './types';
 
 const DEFAULTS: ModelOptions = {
   shape: 'rectangle', widthMm: 120, heightMm: 80, polygonSides: 6, cornerRadiusMm: 0,
@@ -22,7 +22,7 @@ const api = window.terrain;
 function unwrap<T>(result: Result<T>): T { if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code }); return result.value; }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : '操作未完成，请重试。'; }
 function codeOf(error: unknown): string { return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : ''; }
-function signature(route: RouteInfo | null, dem: DemInfo | null, image:ImageInfo|null, mode: 'auto' | 'local', imageMode: ImageMode, imageLookbackMonths: 12 | 24, offlineOnly: boolean, options: ModelOptions): string { return JSON.stringify({ routeId: route?.id, demId: mode === 'local' ? dem?.id : undefined, imageId:imageMode === 'local' ? image?.id : undefined, demMode: mode, imageMode, imageLookbackMonths: imageMode === 'auto' ? imageLookbackMonths : undefined, offlineOnly: mode === 'auto' && offlineOnly, options:geometryOptions(options) }); }
+function signature(route: RouteInfo | null, dem: DemInfo | null, image:ImageInfo|null, mode: 'auto' | 'local', imageMode: ImageMode, imageLookbackMonths: ImageLookbackMonths, offlineOnly: boolean, options: ModelOptions): string { return JSON.stringify({ routeId: route?.id, demId: mode === 'local' ? dem?.id : undefined, imageId:imageMode === 'local' ? image?.id : undefined, demMode: mode, imageMode, imageLookbackMonths: imageMode === 'auto' ? imageLookbackMonths : undefined, offlineOnly: mode === 'auto' && offlineOnly, options:geometryOptions(options) }); }
 function sizeLabel(bytes: number): string { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function sourceLabel(source: NonNullable<Job['result']>['demSource']): string {
   if (!source) return '本地高程';
@@ -81,7 +81,7 @@ export default function App() {
   const [dem, setDem] = useState<DemInfo | null>(null);
   const [image,setImage]=useState<ImageInfo|null>(null);
   const [imageMode, setImageMode] = useState<ImageMode>('auto');
-  const [imageLookbackMonths, setImageLookbackMonths] = useState<12 | 24>(24);
+  const [imageLookbackMonths, setImageLookbackMonths] = useState<ImageLookbackMonths>(24);
   const [exportFormat,setExportFormat]=useState<'3mf'|'obj'|'stl'>('3mf');
   const [demMode, setDemMode] = useState<'auto' | 'local'>('auto');
   const [offlineOnly, setOfflineOnly] = useState(false);
@@ -256,8 +256,8 @@ export default function App() {
   function chooseDem() { if (!api) return; void operate('正在读取高程', async () => { const selected = unwrap(await api.chooseDem()); if (selected) { setDem(selected); setDemMode('local'); setSavedPath(''); } }); }
   function changeImageMode(mode: ImageMode) { setImageMode(mode); setError(''); setErrorCode(''); setSavedPath(''); }
   function changeImageSource(value: string) {
-    if (value === '12' || value === '24') {
-      setImageLookbackMonths(value === '12' ? 12 : 24); changeImageMode('auto');
+    if (['12', '24', '36', '48', '60'].includes(value)) {
+      setImageLookbackMonths(Number(value) as ImageLookbackMonths); changeImageMode('auto');
     } else if (value === 'none' || value === 'local') changeImageMode(value);
   }
   function chooseImage() { if(!api || imageMode !== 'local')return;void operate('正在读取地表影像',async()=>{const selected=unwrap(await api.chooseImage());if(selected){setImage(selected);setSavedPath('');}}); }
@@ -347,8 +347,8 @@ export default function App() {
           {sessionMessage && <p className="session-message" role="status">{sessionMessage}</p>}
         </section>
         <section className="control-section surface-section" onDragOver={event=>{event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=controlsLocked||imageMode!=='local'?'none':'copy';}} onDrop={event=>{event.preventDefault();event.stopPropagation();dragDepth.current=0;setDragging(false);if(!controlsLocked&&imageMode==='local')dropImage(Array.from(event.dataTransfer.files));}}>
-          <h2>地表与打印颜色</h2><label className="select-field image-mode" htmlFor="image-mode">地表影像来源<select id="image-mode" value={imageMode === 'auto' ? String(imageLookbackMonths) : imageMode} disabled={controlsLocked} onChange={event => changeImageSource(event.currentTarget.value)}><option value="none">不使用</option><option value="12">最近一个夏季（6–8月）</option><option value="24">最近两个夏季（6–8月）</option><option value="local">本地导入</option></select></label>
-          {imageMode === 'none' ? <p className="field-hint">不使用地表影像，山体表面统一配色；高程和路线照常生成。</p> : imageMode === 'auto' ? <div className="automatic-image-info"><p className="field-hint">生成模型时按取景范围获取最近{imageLookbackMonths === 12 ? '一个' : '两个'}夏季（6–8月）拍摄的 Sentinel-2 真彩色影像，只复用符合所选夏季的已验证缓存；首次获取需要联网。</p><p className="field-hint">卫星影像并非实时，会筛除云、云影和无效像元。所选夏季没有可用影像或云层遮挡、覆盖不足时会明确提示，可重试或切换本地导入；不会改用非夏季影像。</p></div> : <><div className="file-row image-file-row"><label>彩色地表 GeoTIFF</label><button onClick={chooseImage} disabled={controlsLocked||!api}>{image?'更换地表影像':'选择地表影像'}</button></div>
+          <h2>地表与打印颜色</h2><label className="select-field image-mode" htmlFor="image-mode">地表影像来源<select id="image-mode" value={imageMode === 'auto' ? String(imageLookbackMonths) : imageMode} disabled={controlsLocked} onChange={event => changeImageSource(event.currentTarget.value)}><option value="none">不使用</option><option value="12">最近一个夏季（6–8月）</option><option value="24">最近两个夏季（6–8月）</option><option value="36">最近三个夏季（6–8月）</option><option value="48">最近四个夏季（6–8月）</option><option value="60">最近五个夏季（6–8月）</option><option value="local">本地导入</option></select></label>
+          {imageMode === 'none' ? <p className="field-hint">不使用地表影像，山体表面统一配色；高程和路线照常生成。</p> : imageMode === 'auto' ? <div className="automatic-image-info"><p className="field-hint">生成模型时获取最近 {imageLookbackMonths / 12} 个夏季（6–8月）的 Sentinel-2 真彩色影像，优先使用近期影像；可选 1–5 个夏季，默认两个。首次获取需要联网。</p><p className="field-hint">按实际山体轮廓及外侧 2 像素缓冲检查覆盖，轮廓外的空白不阻止生成。筛除云、云影和无效像元，只复用符合所选夏季、轮廓和识别强度的已验证缓存。</p><p className="field-hint">仅当全部缺口占比与局部占比均低于 1%，且 3 像素内有效邻域的草地／山石分类有明确多数时补齐；票数相同或其他缺口仍会提示失败。可扩大夏季范围、重试或本地导入，不会改用冬季影像。</p></div> : <><div className="file-row image-file-row"><label>彩色地表 GeoTIFF</label><button onClick={chooseImage} disabled={controlsLocked||!api}>{image?'更换地表影像':'选择地表影像'}</button></div>
           {image?<div className="file-detail image-detail"><strong title={image.fileName}>{image.fileName}</strong><p>{image.width} × {image.height} 像素 · {image.crs}</p><button onClick={clearImage} disabled={controlsLocked}>清除地表影像</button></div>:<p className="field-hint">导入或拖入此区域 · RGB 地表影像 · 最大 64 MB。未导入时山体统一配色。</p>}</>}
           {imageMode !== 'none' && <p className="field-hint">依据影像颜色将绿色区域与非植被区域归并为草地、山石代表色；这是颜色归类，无法准确识别地物。地图底图仅供取景。</p>}
           <div className="grass-sensitivity-field">

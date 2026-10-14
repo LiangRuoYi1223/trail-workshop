@@ -46,7 +46,7 @@ function zipEntries(bytes) {
 async function fixture(t, { realWorker = false, cache = true, provider = 'success', timeout = 30000, workerTransform = value => value } = {}) {
   await mkdir(parent, { recursive: true });
   const root = await mkdtemp(join(parent, 'case-')), profile = join(root, 'profile');
-  const routePath = join(root, '路线.gpx'), imagePath = join(root, '本地地表.tif'), marker = join(root, 'provider.json');
+  const routePath = join(root, '路线.gpx'), imagePath = join(root, '本地地表.tif'), marker = join(root, 'provider.json'), probeMarker = join(root, 'probe.json');
   await Promise.all([mkdir(profile), writeFile(routePath, gpx), writeFile(imagePath, rgbTiff())]);
   // Only the network boundary is controlled; classification, generation, publication and export remain real.
   const controlledCore = join(root, 'network-fixture.mjs');
@@ -56,18 +56,19 @@ import { readFile, writeFile } from 'node:fs/promises';
 export async function loadSentinelColorImage(bounds, config) {
   const cachePath = ${JSON.stringify(join(root, 'provider-cache.json'))};
   if (config.offlineOnly) {
+    await writeFile(${JSON.stringify(probeMarker)}, JSON.stringify({ modelFootprint: config.modelFootprint, grassSensitivity: config.grassSensitivity }));
     let cached; try { cached = JSON.parse(await readFile(cachePath, 'utf8')); } catch {}
     if (!cached || JSON.stringify(cached.bounds) !== JSON.stringify(bounds) || cached.lookbackMonths !== config.lookbackMonths)
       throw Object.assign(new Error('此取景尚无完整影像缓存'), { code: 'IMAGE_CACHE_MISS' });
   } else {
-  await writeFile(${JSON.stringify(marker)}, JSON.stringify({ bounds, cacheDir: config.cacheDir, offlineOnly: config.offlineOnly, lookbackMonths: config.lookbackMonths, signal: config.signal instanceof AbortSignal }));
+  await writeFile(${JSON.stringify(marker)}, JSON.stringify({ bounds, cacheDir: config.cacheDir, offlineOnly: config.offlineOnly, lookbackMonths: config.lookbackMonths, modelFootprint: config.modelFootprint, grassSensitivity: config.grassSensitivity, signal: config.signal instanceof AbortSignal }));
   config.onProgress?.({ progress: 0.4, message: '正在筛除云层并获取 Sentinel-2 影像' });
   if (${JSON.stringify(provider)} === 'failure') throw Object.assign(new Error('取景内影像云层遮挡，请重试或切换本地导入'), { code: 'IMAGE_CLOUD_COVERAGE' });
   if (${JSON.stringify(provider)} === 'other-error') throw Object.assign(new Error('上次高程文件已改变，请重新选择'), { code: 'SESSION_INPUT_CHANGED' });
   if (${JSON.stringify(provider)} === 'slow') await new Promise(done => setTimeout(done, 5000));
   if (${JSON.stringify(provider)} === 'success') await writeFile(cachePath, JSON.stringify({ bounds, lookbackMonths: config.lookbackMonths }));
   }
-  return { image: await loadColorGeoTiff(${JSON.stringify(imagePath)}), source: { provider: 'Sentinel-2', collection: 'sentinel-2-c1-l2a', scenes: [${JSON.stringify(scene)}], attribution: 'Contains modified Copernicus Sentinel data 2026', cacheHit: config.offlineOnly === true, retrievedAt: '2026-10-10T12:00:00Z', bounds: ${JSON.stringify(provider)} === 'wrong-bounds' ? { ...bounds, west: bounds.west - 1 } : bounds } };
+  return { image: await loadColorGeoTiff(${JSON.stringify(imagePath)}), source: { provider: 'Sentinel-2', collection: 'sentinel-2-c1-l2a', scenes: [${JSON.stringify(scene)}], attribution: 'Contains modified Copernicus Sentinel data 2026', coverageRepair: { filledPixels: 1, modelPixels: 1024 }, cacheHit: config.offlineOnly === true, retrievedAt: '2026-10-10T12:00:00Z', bounds: ${JSON.stringify(provider)} === 'wrong-bounds' ? { ...bounds, west: bounds.west - 1 } : bounds } };
 }
 `);
   const workers = [], managers = [], stores = [];
@@ -90,7 +91,7 @@ export async function loadSentinelColorImage(bounds, config) {
   });
   const first = fresh(), route = await first.manager.addRoute(routePath);
   const dem = await first.manager.addDem(join(project, 'data/copernicus-longquanshan.tif'));
-  return { root, profile, marker, imagePath, route, dem, workers, fresh, ...first,
+  return { root, profile, marker, probeMarker, imagePath, route, dem, workers, fresh, ...first,
     request: { routeId: route.id, demId: dem.id, demMode: 'local', options } };
 }
 async function settled(manager, id) {
@@ -129,7 +130,7 @@ test('invalid imagery mode or cache configuration is rejected', async t => {
   assert.throws(() => createDesktopManager({ taskRoot: f.root, coreModuleUrl, imageCacheDir: '', workerFactory() {} }), { code: 'CONFIG_INVALID' });
 });
 
-for (const imageLookbackMonths of [12, 24]) {
+for (const imageLookbackMonths of [12, 24, 36, 48, 60]) {
   test(`${imageLookbackMonths}-month automatic imagery reaches the real worker provider`, async t => {
     const f = await fixture(t, { realWorker: true });
     const job = await f.manager.start({ ...f.request, imageMode: 'auto', imageLookbackMonths });
@@ -143,7 +144,7 @@ for (const imageLookbackMonths of [12, 24]) {
 test('unsupported supplied imagery periods fail before launching a worker', async t => {
   const f = await fixture(t);
   for (const imageMode of ['auto', 'local', 'none']) {
-    for (const imageLookbackMonths of [0, 6, 36, '12', null]) {
+    for (const imageLookbackMonths of [0, 6, 72, '12', null]) {
       await assert.rejects(f.manager.start({ ...f.request, imageMode, imageLookbackMonths }), { code: 'CONFIG_INVALID' });
     }
   }
@@ -151,7 +152,7 @@ test('unsupported supplied imagery periods fail before launching a worker', asyn
 });
 
 test('real automatic worker independently rejects an unsupported period before acquisition', async t => {
-  const f = await fixture(t, { realWorker: true, workerTransform: value => ({ ...value, imageLookbackMonths: 36 }) });
+  const f = await fixture(t, { realWorker: true, workerTransform: value => ({ ...value, imageLookbackMonths: 72 }) });
   const job = await f.manager.start({ ...f.request, imageMode: 'auto' }), failed = await settled(f.manager, job.id);
   assert.equal(failed.state, 'failed'); assert.equal(failed.error.code, 'IMAGE_REQUEST_INVALID');
   await assert.rejects(readFile(f.marker), { code: 'ENOENT' });
@@ -165,6 +166,28 @@ test('real legacy automatic worker defaults an omitted period to 24 months', asy
   assert.equal(completed.state, 'succeeded', JSON.stringify(completed.error));
   assert.equal(JSON.parse(await readFile(f.marker, 'utf8')).lookbackMonths, 24);
 });
+
+for (const shapeOptions of [{ shape: 'polygon', polygonSides: 6 }, { shape: 'circle' }, { shape: 'rectangle', cornerRadiusMm: 5 }]) {
+  test(`${shapeOptions.shape} imagery worker and timing probe share the exact clipped terrain footprint`, async t => {
+    const f = await fixture(t, { realWorker: true }), core = await import(coreModuleUrl);
+    const selectedOptions = { ...options, ...shapeOptions, bearingDeg: 23, grassSensitivity: 37 };
+    const job = await f.manager.start({ ...f.request, imageMode: 'auto', options: selectedOptions });
+    const completed = await settled(f.manager, job.id);
+    assert.equal(completed.state, 'succeeded', JSON.stringify(completed.error));
+    const frame = core.createTerrainFrame(f.route.segments.flat(), completed.options);
+    const longest = Math.max(frame.crop.widthMm, frame.crop.heightMm), grid = completed.options.gridColumns;
+    const cols = Math.max(3, Math.round((grid - 1) * frame.crop.widthMm / longest) + 1);
+    const rows = Math.max(3, Math.round((grid - 1) * frame.crop.heightMm / longest) + 1);
+    const footprint = core.buildTerrainFootprintPolygonMm(frame.crop, cols, rows).map(({ x, y }) => frame.mmToGeo(x, y));
+    const acquired = JSON.parse(await readFile(f.marker, 'utf8'));
+    assert.deepEqual(acquired.bounds, frame.bounds, 'DEM acquisition rectangle stays unchanged');
+    assert.ok(footprint.every(point => acquired.modelFootprint.some(actual => actual.lat === point.lat && actual.lon === point.lon)), 'adaptive outline preserves every original model vertex');
+    assert.equal(acquired.grassSensitivity, 37);
+    assert.deepEqual(JSON.parse(await readFile(f.probeMarker, 'utf8')), { modelFootprint: acquired.modelFootprint, grassSensitivity: 37 });
+    assert.ok(acquired.modelFootprint.every(({ lat, lon }) => Number.isFinite(lat) && Number.isFinite(lon)));
+    assert.ok(acquired.modelFootprint.length >= (shapeOptions.shape === 'polygon' ? 6 : 16));
+  });
+}
 
 test('none imagery generates uniform appearance without cache or stale local sources', async t => {
   const f = await fixture(t, { realWorker: true, cache: false, workerTransform: value => ({ ...value,
@@ -193,6 +216,7 @@ test('real automatic worker publishes provenance and keeps it in recolored 3MF a
   assert.ok(source, 'Successful automatic imagery must disclose its source');
   assert.deepEqual(source.scenes, [scene]); assert.equal(source.provider, 'Sentinel-2'); assert.equal(source.cacheHit, false);
   assert.equal(source.attribution, 'Contains modified Copernicus Sentinel data 2026');
+  assert.deepEqual(source.coverageRepair, { filledPixels: 1, modelPixels: 1024 });
   assert.deepEqual(preview.report.imageSource, source);
   const acquisition = JSON.parse(await readFile(f.marker, 'utf8'));
   assert.equal(acquisition.cacheDir, join(f.profile, 'surface-cache')); assert.equal(acquisition.offlineOnly, false);
@@ -256,7 +280,7 @@ test('fresh sessions default to automatic imagery and save its mode without stal
   assert.equal((await f.fresh().store.getSession()).recentProject.imageMode, 'auto');
 });
 
-for (const [imageMode, imageLookbackMonths] of [['auto', 12], ['auto', 24], ['none', 12], ['none', 24]]) {
+for (const [imageMode, imageLookbackMonths] of ['auto', 'none'].flatMap(mode => [12, 24, 36, 48, 60].map(months => [mode, months]))) {
   test(`${imageMode} imagery and ${imageLookbackMonths}-month period survive startup and project recovery`, async t => {
     const f = await fixture(t);
     await f.store.saveSession({ ...f.request, imageMode, imageLookbackMonths, imageId: 'stale-id', offlineOnly: false });
@@ -287,7 +311,7 @@ test('invalid supplied session periods do not replace the last saved project', a
   const f = await fixture(t);
   await f.store.saveSession({ ...f.request, imageMode: 'auto', offlineOnly: false });
   const sessionPath = join(f.profile, 'session-v1.json'), before = await readFile(sessionPath);
-  for (const imageLookbackMonths of [0, 6, 36, '12', null]) {
+  for (const imageLookbackMonths of [0, 6, 72, '12', null]) {
     await assert.rejects(f.store.saveSession({ ...f.request, imageMode: 'auto', imageLookbackMonths, offlineOnly: false }), { code: 'CONFIG_INVALID' });
   }
   assert.deepEqual(await readFile(sessionPath), before);
@@ -298,7 +322,7 @@ for (const field of ['preferences', 'recentProject']) {
     const f = await fixture(t);
     await f.store.saveSession({ ...f.request, imageMode: 'auto', imageLookbackMonths: 12, offlineOnly: false });
     const sessionPath = join(f.profile, 'session-v1.json'), stored = JSON.parse(await readFile(sessionPath, 'utf8'));
-    stored[field].imageLookbackMonths = 36; await writeFile(sessionPath, JSON.stringify(stored));
+    stored[field].imageLookbackMonths = 72; await writeFile(sessionPath, JSON.stringify(stored));
     const next = f.fresh(), startup = await next.store.getSession(), restored = await next.store.restoreSession();
     assert.ok(startup.warnings.length > 0);
     assert.equal(startup.preferences.imageLookbackMonths, field === 'preferences' ? 24 : 12);

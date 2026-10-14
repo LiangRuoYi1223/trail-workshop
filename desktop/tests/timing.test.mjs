@@ -109,6 +109,31 @@ test('an empty or invalid automatic cache is never classified as validated merel
   assert.deepEqual(again, { dem: 'network', image: 'network' });
 });
 
+test('automatic timing cache validates the selected model footprint, summer horizon and recognition strength', async () => {
+  const bounds = { west: 104.28, east: 104.30, south: 30.56, north: 30.57 };
+  const modelFootprint = [{ lat: 30.56, lon: 104.28 }, { lat: 30.56, lon: 104.30 }, { lat: 30.57, lon: 104.29 }];
+  const requests = [];
+  const core = { loadSentinelColorImage: async (actualBounds, config) => {
+    requests.push({ actualBounds, config });
+    return { image: { sample() {} }, source: { cacheHit: true } };
+  } };
+  assert.deepEqual(await timing.probeTimingCache({ core, bounds, demMode: 'local', imageMode: 'auto',
+    imageCacheDir: '/unused', imageLookbackMonths: 60, modelFootprint, grassSensitivity: 37 }), { dem: 'local', image: 'validated-cache' });
+  assert.deepEqual(requests[0].actualBounds, bounds);
+  assert.deepEqual(requests[0].config.modelFootprint, modelFootprint);
+  assert.equal(requests[0].config.grassSensitivity, 37);
+  assert.equal(requests[0].config.lookbackMonths, 60);
+  assert.equal(requests[0].config.offlineOnly, true);
+});
+
+test('automatic timing cohorts separate model footprints and repair classification strength', () => {
+  const modelFootprint = [{ lat: 30.56, lon: 104.28 }, { lat: 30.56, lon: 104.30 }, { lat: 30.57, lon: 104.29 }];
+  const input = { route: { pointCount: 2 }, imageMode: 'auto', options: { grassSensitivity: 37 }, modelFootprint };
+  const original = timing.timingFeatures(input);
+  assert.notDeepEqual(original, timing.timingFeatures({ ...input, modelFootprint: modelFootprint.map(point => ({ ...point, lon: point.lon + .01 })) }));
+  assert.notDeepEqual(original, timing.timingFeatures({ ...input, options: { grassSensitivity: 50 } }));
+});
+
 test('unknown cache integrity keeps prediction uncalibrated even with accurate timing history', async t => {
   const f = await fixture(t), history = timing.createTimingHistory({ path: f.path, ...profile });
   const cache = { dem: 'unknown', image: 'none' };

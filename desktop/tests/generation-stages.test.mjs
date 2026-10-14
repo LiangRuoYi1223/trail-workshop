@@ -191,10 +191,25 @@ test('summer diagnostics preserve valid counters but redact unsafe scene paths a
  child.send({type:'progress',phase:'acquire',progress:.2,acquisition:{image:{state:'running',progress:.4,message:'补齐取景',retryCount:2,downloadBudgetBytes:512*1024*1024,reservedBytes:65536,catalogRequestCount:2,rangeRequestCount:8,attemptedScenes:4,sceneContribution:64,sceneId:'S2_SUMMER_A',sceneDate:'2026-07-21'}}});
  const good=f.manager.get(job.id).acquisition.image;
  assert.equal(good.retryCount,2);assert.equal(good.downloadBudgetBytes,512*1024*1024);assert.equal(good.reservedBytes,65536);assert.equal(good.sceneContribution,64);assert.equal(good.sceneId,'S2_SUMMER_A');
- child.send({type:'progress',phase:'acquire',progress:.3,acquisition:{image:{state:'running',progress:.5,message:'补齐取景',retryCount:3,attemptedScenes:25,sceneId:'C:/private/scene',sceneDate:'https://secret.example/'}}});
+ child.send({type:'progress',phase:'acquire',progress:.3,acquisition:{image:{state:'running',progress:.5,message:'补齐取景',retryCount:3,attemptedScenes:121,sceneId:'C:/private/scene',sceneDate:'https://secret.example/'}}});
  const bad=f.manager.get(job.id).acquisition.image;
  for(const field of ['retryCount','attemptedScenes','sceneId','sceneDate'])assert.equal(bad[field],undefined);
  f.manager.cancel(job.id);await settled(f,job.id);
+});
+
+test('summer diagnostics retain scene attempts beyond one summer through the five-summer limit', async t => {
+  const f = await fixture(t), job = await f.start(), child = f.workers[0];
+  for (const attemptedScenes of [25, 120]) {
+    child.send({ type: 'progress', phase: 'acquire', progress: .3, acquisition: { image: {
+      state: 'running', progress: .4, message: '读取夏季影像', attemptedScenes,
+    } } });
+    assert.equal(f.manager.get(job.id).acquisition.image.attemptedScenes, attemptedScenes);
+  }
+  child.send({ type: 'progress', phase: 'acquire', progress: .4, acquisition: { image: {
+    state: 'running', progress: .5, message: '无效计数', attemptedScenes: 121,
+  } } });
+  assert.equal(f.manager.get(job.id).acquisition.image.attemptedScenes, undefined);
+  f.manager.cancel(job.id); await settled(f, job.id);
 });
 
 

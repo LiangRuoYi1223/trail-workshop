@@ -17,13 +17,17 @@ const hardwareIdentity = () => digest({ platform: platform(), arch: arch(), cpu:
   nodeMajor: process.versions.node.split('.')[0], electronMajor: process.versions.electron?.split('.')[0] });
 
 /** Only workload and acquisition inputs belong here; print colors never change the cohort. */
-export function timingFeatures({ route, options = {}, bounds, demMode, imageMode, imageLookbackMonths = 24, demBytes = 0, imageBytes = 0 }) {
+export function timingFeatures({ route, options = {}, bounds, modelFootprint, demMode, imageMode, imageLookbackMonths = 24, demBytes = 0, imageBytes = 0 }) {
   const result = { pointCount: route?.pointCount ?? 0, segmentCount: route?.segmentCount ?? 0, demMode, imageMode, imageLookbackMonths,
     demBytes, imageBytes };
   for (const name of ['gridColumns', 'widthMm', 'heightMm', 'shape', 'polygonSides', 'cornerRadiusMm', 'bearingDeg', 'baseThicknessMm',
     'zExaggeration', 'smoothing', 'routeWidthMm', 'routeHeightMm', 'frameWidthMm', 'maxMissingFraction', 'snowEnabled',
     'snowCoveragePercent', 'snowMaxThicknessMm', 'baseText', 'baseTextSizeMm', 'routeEnabled', 'textEnabled']) if (options[name] !== undefined) result[name] = options[name];
   if (options.textEnabled === false) result.baseText = '';
+  if (imageMode === 'auto') {
+    result.grassSensitivity = options.grassSensitivity ?? 50;
+    if (modelFootprint) result.modelFootprintKey = digest(modelFootprint);
+  }
   if (bounds) {
     // Area and latitude affect raster work without making every shifted view a separate geometry cohort.
     const area = Math.abs((bounds.east - bounds.west) * (bounds.north - bounds.south) * Math.cos((bounds.north + bounds.south) * Math.PI / 360));
@@ -35,7 +39,7 @@ export function timingFeatures({ route, options = {}, bounds, demMode, imageMode
 
 /** Offline loaders perform their ordinary integrity/date/bounds checks; file existence proves nothing. */
 export async function probeTimingCache({ core, bounds, demMode, imageMode, hasLocalImage = false, demCacheDir, imageCacheDir,
-  imageLookbackMonths = 24, signal, clock = () => new Date() }) {
+  imageLookbackMonths = 24, modelFootprint, grassSensitivity = 50, signal, clock = () => new Date() }) {
   const probe = async (branch, operation) => {
     if (typeof operation !== 'function') return 'unknown';
     try {
@@ -50,7 +54,7 @@ export async function probeTimingCache({ core, bounds, demMode, imageMode, hasLo
     demMode === 'auto' ? probe('dem', typeof core.loadCopernicusDem === 'function' ? () => core.loadCopernicusDem(bounds,
       { cacheDir: demCacheDir, offlineOnly: true, signal }) : undefined) : 'local',
     imageMode === 'auto' ? probe('image', typeof core.loadSentinelColorImage === 'function' ? () => core.loadSentinelColorImage(bounds,
-      { cacheDir: imageCacheDir, offlineOnly: true, lookbackMonths: imageLookbackMonths, signal, now: () => new Date(clock()) }) : undefined)
+      { cacheDir: imageCacheDir, offlineOnly: true, lookbackMonths: imageLookbackMonths, modelFootprint, grassSensitivity, signal, now: () => new Date(clock()) }) : undefined)
       : hasLocalImage ? 'local' : 'none',
   ]);
   return { dem, image };

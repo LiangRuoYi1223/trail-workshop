@@ -21,11 +21,13 @@ export interface RouteInfo {
 export interface DemInfo { id: string; fileName: string; bytes: number; isSample: boolean; dataset?: string }
 export interface ImageInfo { id:string; fileName:string; bytes:number; width:number; height:number; crs:string }
 export type ImageMode = 'none' | 'auto' | 'local';
+export type ImageLookbackMonths = 12 | 24 | 36 | 48 | 60;
 export interface SurfaceImageSource {
   provider: 'Sentinel-2'; collection: 'sentinel-2-c1-l2a';
   scenes: Array<{ id: string; datetime: string; cloudCover: number }>;
   cacheHit: boolean; retrievedAt: string; attribution?: string;
   bounds: { west: number; south: number; east: number; north: number };
+  coverageRepair?: { filledPixels: number; modelPixels: number };
 }
 export interface AppearanceOptions { maxColors:1|2|3|4|5|6; grassColor:string; rockColor:string; grassEnabled?:boolean; rockEnabled?:boolean;
   baseText?:string; baseTextSizeMm?:number; baseColorSource?:'grass'|'rock'|'custom'; baseColor?:string; textColorSource?:'route'|'custom'; textColor?:string; routeColor:string }
@@ -60,7 +62,7 @@ export interface PhaseProgress {
 export interface Job {
   id: string; state: 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled';
   progress: number; message: string; createdAt: string; routeName: string; options: ModelOptions;
-  imageMode?: ImageMode; imageLookbackMonths?: 12 | 24;
+  imageMode?: ImageMode; imageLookbackMonths?: ImageLookbackMonths;
   phase?: 'prepare' | 'acquire' | 'model' | 'verify';
   acquisition?: { image?: PhaseProgress; dem?: PhaseProgress };
   timing?: {estimatedTotalMs:number;estimatedRangeMs:{low:number;high:number};confidence:'uncalibrated'|'reference'|'calibrated';estimateVersion:string;totalDurationMs?:number;finishedAt?:string;elapsedMs?:number};
@@ -82,10 +84,10 @@ export interface Preview {
 }
 export interface RuntimeInfo { version: string; electron: string; node: string; platform: string; packaged: boolean; units: 'mm' }
 export interface CacheInfo { path: string; elevationBytes: number; mapBytes: number; imageBytes?: number }
-export interface SessionPreferences { options: ModelOptions; demMode: 'auto' | 'local'; imageMode?: ImageMode; imageLookbackMonths?: 12 | 24; offlineOnly: boolean }
+export interface SessionPreferences { options: ModelOptions; demMode: 'auto' | 'local'; imageMode?: ImageMode; imageLookbackMonths?: ImageLookbackMonths; offlineOnly: boolean }
 export interface SessionInfo {
   schemaVersion: 1; preferences: SessionPreferences; warnings: string[];
-  recentProject?: { routeName: string; routeFileName: string; demFileName?: string; imageFileName?:string; imageMode?: ImageMode; imageLookbackMonths?: 12 | 24; savedAt: string };
+  recentProject?: { routeName: string; routeFileName: string; demFileName?: string; imageFileName?:string; imageMode?: ImageMode; imageLookbackMonths?: ImageLookbackMonths; savedAt: string };
 }
 export interface RestoredSession extends SessionPreferences { route?: RouteInfo; dem?: DemInfo; image?:ImageInfo; warnings: string[] }
 export interface TerrainApi {
@@ -98,11 +100,11 @@ export interface TerrainApi {
   importDemFile(file: File): Promise<Result<DemInfo>>;
   importImageFile(file:File):Promise<Result<ImageInfo>>;
   inspect(request: { routeId: string; options: ModelOptions }): Promise<Result<Inspection>>;
-  startJob(request: { routeId: string; demId?: string; imageId?:string; demMode: 'auto' | 'local'; imageMode: ImageMode; imageLookbackMonths?: 12 | 24; offlineOnly?: boolean; options: ModelOptions }): Promise<Result<Job>>;
+  startJob(request: { routeId: string; demId?: string; imageId?:string; demMode: 'auto' | 'local'; imageMode: ImageMode; imageLookbackMonths?: ImageLookbackMonths; offlineOnly?: boolean; options: ModelOptions }): Promise<Result<Job>>;
   getCacheInfo(): Promise<Result<CacheInfo>>;
   clearCache(): Promise<Result<{ cleared: true }>>;
   getSession(): Promise<Result<SessionInfo>>;
-  saveSession(request: { routeId?: string; demId?: string; imageId?:string; demMode: 'auto' | 'local'; imageMode: ImageMode; imageLookbackMonths?: 12 | 24; offlineOnly: boolean; options: ModelOptions }): Promise<Result<SessionInfo>>;
+  saveSession(request: { routeId?: string; demId?: string; imageId?:string; demMode: 'auto' | 'local'; imageMode: ImageMode; imageLookbackMonths?: ImageLookbackMonths; offlineOnly: boolean; options: ModelOptions }): Promise<Result<SessionInfo>>;
   restoreSession(): Promise<Result<RestoredSession>>;
   cancelJob(id: string): Promise<Result<Job>>;
   getJob(id: string): Promise<Result<Job>>;

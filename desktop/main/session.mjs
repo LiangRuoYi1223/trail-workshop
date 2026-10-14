@@ -30,7 +30,7 @@ function source(value, kind) {
 function preferences(value, legacyHasImage = false) {
   if (!record(value) || Object.keys(value).some(key => !['options', 'demMode', 'imageMode', 'imageLookbackMonths', 'offlineOnly'].includes(key))
     || !record(value.options) || !['auto', 'local'].includes(value.demMode) || !['auto', 'local', 'none'].includes(imageMode(value.imageMode, legacyHasImage))
-    || ![12, 24].includes(imageLookbackMonths(value.imageLookbackMonths))
+    || ![12, 24, 36, 48, 60].includes(imageLookbackMonths(value.imageLookbackMonths))
     || typeof value.offlineOnly !== 'boolean') throw new DesktopError('SESSION_INVALID', '上次设置无效，已恢复默认设置');
   return { options: withoutGeography(validateOptions(value.options)), demMode: value.demMode,
     imageMode: imageMode(value.imageMode, legacyHasImage), imageLookbackMonths: imageLookbackMonths(value.imageLookbackMonths), offlineOnly: value.offlineOnly };
@@ -40,7 +40,7 @@ function recent(value) {
   if (!record(value) || Object.keys(value).some(key => !['route', 'dem', 'image', 'options', 'demMode', 'imageMode', 'imageLookbackMonths', 'offlineOnly', 'savedAt'].includes(key))
     || !record(value.options) || !['auto', 'local'].includes(value.demMode) || typeof value.offlineOnly !== 'boolean'
     || !['auto', 'local', 'none'].includes(imageMode(value.imageMode, value.image !== undefined))
-    || ![12, 24].includes(imageLookbackMonths(value.imageLookbackMonths))
+    || ![12, 24, 36, 48, 60].includes(imageLookbackMonths(value.imageLookbackMonths))
     || typeof value.savedAt !== 'string' || !Number.isFinite(Date.parse(value.savedAt))) throw new DesktopError('SESSION_INVALID', '上次项目记录无效，请重新导入文件');
   return { route: source(value.route, 'route'), ...(value.demMode === 'local' && value.dem !== undefined ? { dem: source(value.dem, 'dem') } : {}),
     ...(imageMode(value.imageMode, value.image !== undefined) === 'local' && value.image !== undefined ? { image: source(value.image, 'image') } : {}),
@@ -136,7 +136,7 @@ export function createSessionStore({ userDataDirectory, manager }) {
         if (!record(input) || Object.keys(input).some(key => !['routeId', 'demId', 'imageId', 'demMode', 'imageMode', 'imageLookbackMonths', 'offlineOnly', 'options'].includes(key))
           || !['auto', 'local'].includes(input.demMode) || typeof input.offlineOnly !== 'boolean'
           || !['auto', 'local', 'none'].includes(imageMode(input.imageMode, input.imageId !== undefined))
-          || ![12, 24].includes(imageLookbackMonths(input.imageLookbackMonths))
+          || ![12, 24, 36, 48, 60].includes(imageLookbackMonths(input.imageLookbackMonths))
           || (input.routeId !== undefined && typeof input.routeId !== 'string') || (input.demId !== undefined && typeof input.demId !== 'string')
           || (input.imageId !== undefined && typeof input.imageId !== 'string')) throw new DesktopError('CONFIG_INVALID', '设置参数无效');
         const options = validateOptions(input.options);

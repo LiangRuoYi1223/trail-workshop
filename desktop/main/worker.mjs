@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { publicError } from './files.mjs';
 import { prepareBaseText } from './base-text-font.mjs';
+import { terrainImageFootprint } from './surface-footprint.mjs';
 
 const electronPort = process.parentPort;
 if (electronPort) {
@@ -49,8 +50,8 @@ port.on('message', async event => {
     send({ type: 'progress', phase: 'prepare', progress: 0.01, message: '正在检查路线和取景范围' });
     const core = await import(message.coreModuleUrl);
     const route = core.parseRouteXml(message.gpxXml, { fileName: message.fileName });
-    const bounds = core.createTerrainFrame(route.segments.flatMap(segment => segment.points), message.options).bounds;
-    if (automaticImage && (![12, 24].includes(imageLookbackMonths) || typeof message.imageCacheDir !== 'string' || !message.imageCacheDir || typeof message.imageOfflineOnly !== 'boolean' || !sameBounds(bounds))) {
+    const frame = core.createTerrainFrame(route.segments.flatMap(segment => segment.points), message.options), bounds = frame.bounds;
+    if (automaticImage && (![12, 24, 36, 48, 60].includes(imageLookbackMonths) || typeof message.imageCacheDir !== 'string' || !message.imageCacheDir || typeof message.imageOfflineOnly !== 'boolean' || !sameBounds(bounds))) {
       throw Object.assign(new Error('自动地表影像取景校验失败，请重试或切换本地导入'), { code: 'IMAGE_REQUEST_INVALID' });
     }
     if (message.demMode === 'auto' && (typeof message.demCacheDir !== 'string' || !message.demCacheDir || typeof message.offlineOnly !== 'boolean' || !sameBounds(bounds))) {
@@ -68,6 +69,7 @@ port.on('message', async event => {
         try {
           ({ image, source: imageSource } = await core.loadSentinelColorImage(bounds, {
             cacheDir: message.imageCacheDir, offlineOnly: message.imageOfflineOnly, lookbackMonths: imageLookbackMonths, signal: controller.signal,
+            modelFootprint: terrainImageFootprint(core, frame, message.options.gridColumns), grassSensitivity: message.grassSensitivity ?? 50,
             onProgress: value => acquisitionProgress('image', value),
           }));
           if (!image || !imageSource) throw Object.assign(new Error('自动地表影像未返回完整的有效数据'), { code: 'IMAGE_ACQUISITION_FAILED' });
